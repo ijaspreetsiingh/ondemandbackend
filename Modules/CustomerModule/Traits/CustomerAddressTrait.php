@@ -1,0 +1,52 @@
+<?php
+
+namespace Modules\CustomerModule\Traits;
+
+use MatanYadaev\EloquentSpatial\Objects\Point;
+use Modules\UserManagement\Entities\UserAddress;
+use Modules\ZoneManagement\Entities\Zone;
+
+trait CustomerAddressTrait
+{
+    public function add_address($service_address, $user_id, $is_guest = 0, $service_location = 'customer')
+    {
+        $zone_id = null;
+
+        if ($service_location == 'customer' && isset($service_address->lat, $service_address->lon)
+            && is_numeric($service_address->lat) && is_numeric($service_address->lon)) {
+            // Sabse specific (smallest) zone — `latest()` overlap ki wajah se
+            // galat zone de sakta tha ("All over the World" vs city zone).
+            $zone_id = zone_id_from_coordinates((float) $service_address->lat, (float) $service_address->lon);
+
+            if (!$zone_id) {
+                $point = new Point($service_address->lat, $service_address->lon);
+                $zone = Zone::whereContains('coordinates', $point)->ofStatus(1)->first();
+                $zone_id = $zone?->id;
+            }
+        }
+
+        $address = new UserAddress;
+        $address->user_id = $user_id;
+        $address->lat = $service_address->lat ?? null;
+        $address->lon = $service_address->lon ?? null;
+        // Null-safe: app/web payload me city/zip/country/house/floor keys absent
+        // ho sakti hain — pehle Undefined property par 500 ho jata tha.
+        $address->city = $service_address->city ?? null;
+        $address->street = $service_address->street ?? '';
+        $address->zip_code = $service_address->zip_code ?? null;
+        $address->country = $service_address->country ?? null;
+        $address->address = $service_address->address ?? '';
+        $address->zone_id = $zone_id;
+        $address->address_type = $service_address->address_type ?? 'service';
+        $address->contact_person_name = $service_address->contact_person_name ?? null;
+        $address->contact_person_number = $service_address->contact_person_number ?? null;
+        $address->address_label = $service_address->address_label ?? null;
+        $address->house = $service_address->house ?? null;
+        $address->floor = $service_address->floor ?? null;
+        $address->is_guest = $is_guest;
+        $address->save();
+
+        return $address->id ?? null;
+    }
+
+}

@@ -1,0 +1,471 @@
+<?php
+
+namespace Modules\PaymentModule\Http\Controllers;
+
+use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Routing\Controller;
+use Illuminate\Routing\Redirector;
+use Illuminate\Validation\ValidationException;
+use Modules\BookingModule\Entities\Booking;
+use Modules\BookingModule\Entities\BookingRepeat;
+use Modules\CustomerModule\Traits\CustomerAddressTrait;
+use Illuminate\Support\Facades\Validator;
+use Modules\PaymentModule\Traits\PaymentHelperTrait;
+use Modules\ProviderManagement\Entities\Provider;
+use Modules\UserManagement\Entities\User;
+use Modules\UserManagement\Entities\UserAddress;
+use Modules\PaymentModule\Traits\Payment as PaymentTrait;
+use Modules\PaymentModule\Library\Payment as Payment;
+use Modules\PaymentModule\Library\Payer;
+use Modules\PaymentModule\Library\Receiver;
+
+
+class PaymentController extends Controller
+{
+    use CustomerAddressTrait, PaymentHelperTrait;
+
+    /**
+     * @param Request $request
+     * @return JsonResponse|Redirector|RedirectResponse|Application
+     * @throws ValidationException
+     */
+    public function index(Request $request): JsonResponse|Redirector|RedirectResponse|Application
+    {
+        // Open-redirect guard: sirf apne hi hosts par wapas bhejo.
+        $safeCallback = paymentRedirectUrl($request['callback'] ?? null);
+
+        //customer user
+        // SECURITY: access_token pehle sirf base64(user_id) hota tha, jise koi
+        // bhi forge karke doosre user ke wallet se partial payment kar sakta
+        // tha. Ab mobile apps apna opaque Passport token bhejte hain; usse
+        // user server par resolve hota hai. Legacy base64 UUID sirf guest
+        // checkout ke liye allowed hai (jo users table me nahi hota).
+        $resolvedUser = resolveUserFromApiToken($request['access_token'] ?? null);
+        $decodedToken = base64_decode((string) $request['access_token'], true);
+        $legacyPayerId = ($decodedToken && \Illuminate\Support\Str::isUuid($decodedToken)) ? $decodedToken : '';
+        $customer_user_id = $resolvedUser?->id ?? $legacyPayerId;
+        $is_guest = empty($customer_user_id) || !User::where('id', $customer_user_id)->exists();
+
+        if (!$resolvedUser && !$is_guest && !$request->has('is_pay_to_admin')) {
+            \Log::warning('Rejected forged legacy payment token', ['ip' => $request->ip()]);
+            if ($safeCallback) {
+                return redirect($safeCallback . '?flag=fail');
+            }
+            return response()->json(response_formatter(DEFAULT_401), 401);
+        }
+
+        if(!is_null($request['is_add_fund']) && !$request->has('is_pay_to_admin')) {
+            $validator = Validator::make($request->all(), [
+                'access_token' => '',
+                'amount' => 'required|numeric',
+                'payment_method' => 'required|in:' . implode(',', array_column(GATEWAYS_PAYMENT_METHODS, 'key')),
+                'payment_platform' => 'nullable|in:web,app'
+            ]);
+
+        }  elseif ($request->has('is_pay_to_admin')) {
+            $validator_data = Validator::make($request->all(), [
+                'payment_method' => 'required|in:' . implode(',', array_column(GATEWAYS_PAYMENT_METHODS, 'key')),
+                'provider_id' => 'required|uuid',
+            ]);
+
+        } elseif ($request->has('is_repeat_single_booking')) {
+            $validator = Validator::make($request->all(), [
+                'access_token' => '',
+                'payment_method' => 'required|in:' . implode(',', array_column(GATEWAYS_PAYMENT_METHODS, 'key')),
+                'payment_platform' => 'nullable|in:web,app',
+                'booking_repeat_id' => 'required|uuid',
+            ]);
+        } elseif ($request->has('switch_offline_to_digital')) {
+            $validator = Validator::make($request->all(), [
+                'access_token' => '',
+                'payment_method' => 'required|in:' . implode(',', array_column(GATEWAYS_PAYMENT_METHODS, 'key')),
+                'payment_platform' => 'nullable|in:web,app',
+                'booking_id' => 'required|uuid',
+            ]);
+        }else {
+            $serviceAtProviderPlace = (int)((business_config('service_at_provider_place', 'provider_config'))->live_values ?? 0);
+
+            $validator = Validator::make($request->all(), [
+                'access_token' => '',
+                'zone_id' => 'required|uuid',
+                'service_schedule' => 'required|date',
+                'service_address_id' => is_null($request['service_address']) ? 'required' : 'nullable',
+                'service_address' => is_null($request['service_address_id']) ? 'required' : 'nullable',
+                'payment_method' => 'required|in:' . implode(',', array_column(GATEWAYS_PAYMENT_METHODS, 'key')),
+                'callback' => 'nullable',
+                //For bidding
+                'post_id' => 'nullable|uuid',
+                'provider_id' => 'nullable|uuid',
+                'is_partial' => 'nullable:in:0,1',
+                'payment_platform' => 'nullable|in:web,app',
+                'service_location' => 'required|in:customer,provider',
+                function ($attribute, $value, $fail) use ($serviceAtProviderPlace) {
+                    if ($value == 'provider' && $serviceAtProviderPlace != 1) {
+                        $fail('The selected service location cannot be "provider" because the service is not available at the provider’s place.');
+                    }
+                },
+            ]);
+        }
+
+        if ($request->has('is_pay_to_admin')){
+            if ($validator_data->fails()) {
+                return redirect()->back()->withErrors($validator_data);
+            }
+
+            $provider = Provider::where('id', $request['provider_id'])->first();
+
+            if ($provider){
+                // Sirf wahi provider apna due pay kar sakta hai (app token ya
+                // logged-in provider web session).
+                $authenticatedUserId = $resolvedUser?->id ?? auth()->id();
+                if (!$authenticatedUserId || (string) $provider->user_id !== (string) $authenticatedUserId) {
+                    return redirect()->back()->withErrors(translate('Unauthorized payment request'));
+                }
+
+                $amount = $provider->owner->account->account_payable - $provider->owner->account->account_receivable;
+                $minPayableAmount = business_config('min_payable_amount', 'provider_config')->live_values ?? 0;
+                if ($minPayableAmount > 0 && $amount < $minPayableAmount){
+                    return redirect()->back()->withErrors(translate('Provider must have to pay greater than or equal to ') . $minPayableAmount);
+                }
+            }
+
+        }else{
+            if ($validator->fails()) {
+                $safeCallback = paymentRedirectUrl($request['callback'] ?? null);
+                if ($safeCallback) return redirect($safeCallback . '?flag=fail');
+                else return response()->json(response_formatter(DEFAULT_400), 400);
+            }
+        }
+
+        // ===== validation ke baad =====
+
+        $is_add_fund = $request['is_add_fund'] == 1 ? 1 : 0;
+        $is_pay_to_admin = $request['is_pay_to_admin'] == true ? 1 : 0;
+        $is_repeat_single_booking = $request['is_repeat_single_booking'] == true ? 1 : 0;
+        $switch_offline_to_digital = $request['switch_offline_to_digital'] ? 1 : 0;
+
+        // Ye teen flows hamesha logged-in customer ke hote hain.
+        if (($is_add_fund || $is_repeat_single_booking || $switch_offline_to_digital) && !$resolvedUser) {
+            if ($safeCallback = paymentRedirectUrl($request['callback'] ?? null)) {
+                return redirect($safeCallback . '?flag=fail');
+            }
+            return response()->json(response_formatter(DEFAULT_401), 401);
+        }
+
+        //==========>>>>>> IF ADD FUND <<<<<<<==============
+
+        //add fund
+        if ($is_add_fund) {
+            $customer = User::find($customer_user_id);
+            $payer = new Payer($customer['first_name'] . ' ' . $customer['last_name'], $customer['email'], $customer['phone'], '');
+            $payment_info = new Payment(
+                success_hook: 'add_fund_success',
+                failure_hook: 'add_fund_fail',
+                currency_code: currency_code(),
+                payment_method: $request['payment_method'],
+                payment_platform: $request['payment_platform'],
+                payer_id: $customer_user_id,
+                receiver_id: null,
+                additional_data: array_merge($validator->validated(), [
+                    'access_token' => base64_encode((string) $customer_user_id),
+                ]),
+                payment_amount: $request['amount'],
+                external_redirect_link: $safeCallback,
+                attribute: 'booking_id',
+                attribute_id: time()
+            );
+
+            $receiver_info = new Receiver('receiver_name', 'example.png');
+            $redirect_link = PaymentTrait::generate_link($payer, $payment_info, $receiver_info);
+            return redirect($redirect_link);
+        }
+
+        //==========>>>>>> IF Provider to Admin Pay <<<<<<<==============
+
+        if ($is_pay_to_admin) {
+
+            $provider = Provider::where('id', $request['provider_id'])->first();
+
+            if ($provider) {
+                $customer = User::find($provider->user_id);
+                if ($provider->owner->account->account_payable > $provider->owner->account->account_receivable) {
+                    $amount = $provider->owner->account->account_payable - $provider->owner->account->account_receivable;
+                    $payer = new Payer($customer['first_name'] . ' ' . $customer['last_name'], $customer['email'], $customer['phone'], '');
+                    $additional_data = ['provider_id'=> $request['provider_id']];
+
+                    $payment_info = new Payment(
+                        success_hook: 'pay_to_admin_success',
+                        failure_hook: 'pay_to_admin_fail',
+                        currency_code: currency_code(),
+                        payment_method: $request['payment_method'],
+                        payment_platform: 'web',
+                        payer_id: $customer['id'],
+                        receiver_id: null,
+                        additional_data: $additional_data,
+                        payment_amount: $amount,
+                        // App (webview) ko wapas bhejne ke liye safe callback use karo;
+                        // warna provider web page par redirect ho jata tha aur app
+                        // ka payment screen close nahi hota tha.
+                        external_redirect_link: $safeCallback ?: route('provider.account_info'),
+                        attribute: 'booking_id',
+                        attribute_id: time()
+                    );
+
+                    $receiver_info = new Receiver('receiver_name', 'example.png');
+                    $redirect_link = PaymentTrait::generate_link($payer, $payment_info, $receiver_info);
+                    return redirect($redirect_link);
+                } else {
+                    return redirect()->back()->withErrors(translate('Invalid Amount'));
+                }
+            } else {
+                return redirect()->back()->withErrors(translate('Provider Not Found'));
+            }
+
+        }
+
+        //==========>>>>>> Repeat Single Booking Payment <<<<<<<==============
+
+        if ($is_repeat_single_booking) {
+            $repeatBooking = BookingRepeat::where('id', $request['booking_repeat_id'])->first();
+
+            if ($repeatBooking) {
+                if ((string) $repeatBooking->customer_id !== (string) $customer_user_id) {
+                    return response()->json(response_formatter(DEFAULT_403), 403);
+                }
+                if (providerRejectsPaymentMethod($repeatBooking->provider_id, $request['payment_method'])) {
+                    return redirect()->back()->withErrors(translate('payment_method_not_allowed_for_provider'));
+                }
+                $customer = User::find($customer_user_id);
+                $amount = $repeatBooking->total_booking_amount;
+                $payer = new Payer($customer['first_name'] . ' ' . $customer['last_name'], $customer['email'], $customer['phone'], '');
+                $additional_data = $request->all();
+                $additional_data['access_token'] = base64_encode((string) $customer_user_id);
+
+                $payment_info = new Payment(
+                    success_hook: 'repeat_booking_payment_success',
+                    failure_hook: 'repeat_booking_payment_fail',
+                    currency_code: currency_code(),
+                    payment_method: $request['payment_method'],
+                    payment_platform: 'web',
+                    payer_id: $customer['id'],
+                    receiver_id: null,
+                    additional_data: $additional_data,
+                    payment_amount: $amount,
+                    external_redirect_link: $safeCallback,
+                    attribute: 'booking_id',
+                    attribute_id: time()
+                );
+
+                $receiver_info = new Receiver('receiver_name', 'example.png');
+                $redirect_link = PaymentTrait::generate_link($payer, $payment_info, $receiver_info);
+                return redirect($redirect_link);
+            } else {
+                return redirect()->back()->withErrors(translate('Provider Not Found'));
+            }
+
+        }
+
+        //==========>>>>>> Switch Offline to Digital Payment <<<<<<<==============
+
+        if ($switch_offline_to_digital) {
+            $booking = Booking::where('id', $request['booking_id'])->first();
+
+            if (!isset($booking)){
+                return redirect()->back()->withErrors(translate('Booking Not Found'));
+            }
+
+            if ((string) $booking->customer_id !== (string) $customer_user_id) {
+                return response()->json(response_formatter(DEFAULT_403), 403);
+            }
+
+            if (providerRejectsPaymentMethod($booking->provider_id, $request['payment_method'])) {
+                return redirect()->back()->withErrors(translate('payment_method_not_allowed_for_provider'));
+            }
+
+            $payer = new Payer('first name' . ' ' . 'last name', 'first@last.com', '1234567890', '');
+            $additional_data = $request->all();
+            $additional_data['access_token'] = base64_encode((string) $customer_user_id);
+
+            $total_booking_amount = $booking->total_booking_amount;
+            $amount_to_pay = $total_booking_amount;
+
+            if ($request['is_partial']){
+                $customer_wallet_balance = User::find($customer_user_id)?->wallet_balance;
+
+                //partial validation
+                if (!$is_guest && $request['is_partial'] && ($customer_wallet_balance <= 0 || $customer_wallet_balance >= $total_booking_amount)) {
+                    return response()->json(response_formatter(DEFAULT_400), 400);
+                }
+
+                $amount_to_pay -= $customer_wallet_balance;
+
+                $data = [
+                    'wallet_paid_amount' => $customer_wallet_balance,
+                    'digitally_paid_amount' => $amount_to_pay,
+                ];
+
+                $additional_data = array_merge($additional_data, $data);
+            }
+
+            $payment_info = new Payment(
+                success_hook: 'switch_offline_to_digital_payment_success',
+                failure_hook: 'switch_offline_to_digital_payment_fail',
+                currency_code: currency_code(),
+                payment_method: $request['payment_method'],
+                payment_platform: 'web',
+                payer_id: $customer_user_id,
+                receiver_id: null,
+                additional_data: $additional_data,
+                payment_amount: $amount_to_pay,
+                external_redirect_link: $safeCallback,
+                attribute: 'booking',
+                attribute_id: time()
+            );
+
+            $receiver_info = new Receiver('receiver_name', 'example.png');
+            $redirect_link = PaymentTrait::generate_link($payer, $payment_info, $receiver_info);
+            return redirect($redirect_link);
+
+        }
+
+        //==========>>>>>> IF Booking <<<<<<<==============
+
+        // Provider ke allowed payment methods (independent mode) — server-side gate
+        $checkoutProviderId = $request['provider_id']
+            ?: \Modules\CartModule\Entities\Cart::where('customer_id', $customer_user_id)->value('provider_id');
+        if (providerRejectsPaymentMethod($checkoutProviderId, $request['payment_method'])) {
+            if ($safeCallback = paymentRedirectUrl($request['callback'] ?? null)) return redirect($safeCallback . '?flag=fail');
+            return response()->json(response_formatter(DEFAULT_400, null, [
+                'payment_method' => [translate('payment_method_not_allowed_for_provider')],
+            ]), 400);
+        }
+
+        //service address create (if no saved address)
+        $service_address = $request->filled('service_address')
+            ? json_decode(base64_decode((string) $request['service_address'], true))
+            : null;
+        if (is_null($request['service_address_id'])
+            && !collect($service_address)->has(['lat', 'lon', 'address', 'contact_person_name', 'contact_person_number', 'address_label'])) {
+            if ($safeCallback = paymentRedirectUrl($request['callback'] ?? null)) return redirect($safeCallback . '?flag=fail');
+            else return response()->json(response_formatter(DEFAULT_400), 400);
+        }
+        if (is_null($request['service_address_id'])) {
+            $request['service_address_id'] = $this->add_address($service_address, null, $is_guest);
+        }
+        if (is_null($request['service_address_id'])) {
+            if ($safeCallback = paymentRedirectUrl($request['callback'] ?? null)) return redirect($safeCallback . '?flag=fail');
+            else return response()->json(response_formatter(DEFAULT_400), 400);
+        }
+
+        // Payment gateway amount ko address ke zone ke price par laao.
+        // Warna stale header zone ka price charge hota aur booking dusre zone
+        // ke price par banti thi (paid amount ≠ booking amount).
+        if (empty($request['post_id'])) {
+            $paymentAddress = UserAddress::find($request['service_address_id']);
+            $paymentZoneId = $paymentAddress
+                ? zone_id_from_coordinates(
+                    is_numeric($paymentAddress->lat) ? (float) $paymentAddress->lat : null,
+                    is_numeric($paymentAddress->lon) ? (float) $paymentAddress->lon : null
+                )
+                : null;
+
+            if ($paymentZoneId) {
+                reprice_cart_for_zone(
+                    \Modules\CartModule\Entities\Cart::where('customer_id', $customer_user_id)->get(),
+                    $paymentZoneId
+                );
+            }
+        }
+
+        // Register new user from guest info
+        $newUserInfo = $request->filled('new_user_info')
+            ? json_decode(base64_decode((string) $request['new_user_info'], true), true)
+            : null;
+
+        if($newUserInfo != null){
+            $new_data = [
+                'register_new_customer' => 1
+            ];
+            $query_params = array_merge($validator->validated(), ['service_address_id' => $request['service_address_id']], $newUserInfo, $new_data);
+        }else{
+            $query_params = array_merge($validator->validated(), ['service_address_id' => $request['service_address_id']]);
+        }
+
+        //guest user check
+        if ($is_guest) {
+            $address = UserAddress::find($request['service_address_id']);
+            $customer = collect([
+                'first_name' => $address['contact_person_name'],
+                'last_name' => '',
+                'phone' => $address['contact_person_number'],
+                'email' => '',
+            ]);
+
+        } else {
+            $customer = User::find($customer_user_id);
+            $customer = collect([
+                'first_name' => $customer['first_name'],
+                'last_name' => $customer['last_name'],
+                'phone' => $customer['phone'],
+                'email' => $customer['email'],
+            ]);
+        }
+        $query_params['customer'] = base64_encode($customer);
+        // Downstream hooks legacy base64(user_id) expect karte hain; opaque
+        // API token ko yahin normalize kar do.
+        $query_params['access_token'] = base64_encode((string) $customer_user_id);
+
+        $total_booking_amount = $this->find_total_Booking_amount($customer_user_id, $request['post_id'], $request['provider_id']);
+        $customer_wallet_balance = User::find($customer_user_id)?->wallet_balance;
+        $amount_to_pay = $request['is_partial'] ? ($total_booking_amount - $customer_wallet_balance) : $total_booking_amount;
+
+        //partial validation
+        if (!$is_guest && $request['is_partial'] && ($customer_wallet_balance <= 0 || $customer_wallet_balance >= $total_booking_amount)) {
+            return response()->json(response_formatter(DEFAULT_400), 400);
+        }
+
+        //make payment
+        $payer = new Payer($customer['first_name'] . ' ' . $customer['last_name'], $customer['email'], $customer['phone'], '');
+        $payment_info = new Payment(
+            success_hook: 'digital_payment_success',
+            failure_hook: 'digital_payment_fail',
+            currency_code: currency_code(),
+            payment_method: $request->payment_method,
+            payment_platform: $request->payment_platform,
+            payer_id: $customer_user_id,
+            receiver_id: null,
+            additional_data: $query_params,
+            payment_amount: $amount_to_pay,
+            external_redirect_link: $safeCallback,
+            attribute: 'booking_id',
+            attribute_id: time()
+        );
+
+        $receiver_info = new Receiver('receiver_name', 'example.png');
+        $redirect_link = PaymentTrait::generate_link($payer, $payment_info, $receiver_info);
+        return redirect($redirect_link);
+    }
+
+    /**
+     * @param Request $request
+     * @return JsonResponse|Redirector|RedirectResponse|Application
+     */
+    public function success(Request $request): JsonResponse|Redirector|RedirectResponse|Application
+    {
+        if ($safeCallback = paymentRedirectUrl($request['callback'] ?? null)) return redirect($safeCallback . '?flag=success');
+        else return response()->json(response_formatter(DEFAULT_200), 200);
+    }
+
+    /**
+     * @param Request $request
+     * @return JsonResponse|Redirector|RedirectResponse|Application
+     */
+    public function fail(Request $request): JsonResponse|Redirector|RedirectResponse|Application
+    {
+        if ($safeCallback = paymentRedirectUrl($request['callback'] ?? null)) return redirect($safeCallback . '?flag=fail');
+        else return response()->json(response_formatter(DEFAULT_400), 400);
+    }
+}

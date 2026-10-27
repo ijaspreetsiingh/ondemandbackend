@@ -1,0 +1,233 @@
+<?php
+
+namespace Modules\ProviderManagement\Entities;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
+use Modules\BookingModule\Entities\Booking;
+use Modules\BookingModule\Entities\BookingIgnore;
+use Modules\BusinessSettingsModule\Entities\PackageSubscriber;
+use Modules\BusinessSettingsModule\Entities\Storage;
+use Modules\ReviewModule\Entities\Review;
+use Modules\UserManagement\Entities\Serviceman;
+use Modules\UserManagement\Entities\User;
+use App\Traits\HasUuid;
+use Modules\ZoneManagement\Entities\Zone;
+use Modules\CategoryManagement\Entities\Category;
+
+class Provider extends Model
+{
+    use HasFactory;
+    use HasUuid;
+    use SoftDeletes;
+
+    protected $casts = [
+        'order_count' => 'integer',
+        'service_man_count' => 'integer',
+        'service_capacity_per_day' => 'integer',
+        'rating_count' => 'integer',
+        'avg_rating' => 'float',
+        'commission_status' => 'integer',
+        'commission_percentage' => 'float',
+        'independent_mode' => 'integer',
+        'admin_commission_percent' => 'float',
+        'provider_commission_percent' => 'float',
+        'platform_fee_amount' => 'float',
+        'tax_percent' => 'float',
+        'booking_fee' => 'float',
+        'custom_fees_enabled' => 'integer',
+        'is_active' => 'integer',
+        'is_approved' => 'integer',
+        'auto_assign_mode' => 'integer',
+        'auto_assign_wait_time' => 'integer',
+        'auto_reassign_on_cancel' => 'integer',
+        'coordinates' => 'json',
+        'category_assignment_mode' => 'integer'
+    ];
+
+    protected $fillable = ['auto_assign_mode', 'auto_assign_wait_time', 'auto_reassign_on_cancel', 'category_assignment_mode', 'assigned_main_category_id', 'allow_service_create', 'allow_service_edit', 'unsatisfied_window_days', 'service_approval_required', 'independent_mode', 'admin_commission_percent', 'provider_commission_percent', 'platform_fee_amount', 'platform_fee_label', 'tax_percent', 'booking_fee', 'custom_fees_enabled', 'booking_fee_label', 'calling_enabled', 'allowed_payment_methods'];
+
+    protected $hidden = [];
+
+    protected $appends = ['logo_full_path', 'cover_image_full_path'];
+
+    public function scopeOfStatus($query, $status)
+    {
+        $query->where('is_active', '=', $status);
+    }
+
+    public function scopeOfApproval($query, $status)
+    {
+        $query->where('is_approved', '=', $status);
+    }
+
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id')->where('user_type', 'provider-admin');
+    }
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function zone(): BelongsTo
+    {
+        return $this->belongsTo(Zone::class, 'zone_id');
+    }
+
+    public function assignedMainCategory(): BelongsTo
+    {
+        return $this->belongsTo(Category::class, 'assigned_main_category_id');
+    }
+
+    public function bank_detail(): HasOne
+    {
+        return $this->hasOne(BankDetail::class, 'provider_id');
+    }
+
+    public function bookings($booking_status = null): HasMany
+    {
+        if ($booking_status == null) {
+            return $this->hasMany(Booking::class, 'provider_id');
+        }
+
+        return $this->hasMany(Booking::class, 'provider_id')->where('booking_status', $booking_status);
+    }
+
+    public function favorites(): HasMany
+    {
+        return $this->hasMany(FavoriteProvider::class, 'provider_id', 'id');
+    }
+
+    public function subscribed_services(): HasMany
+    {
+        return $this->hasMany(SubscribedService::class, 'provider_id')
+            ->where('is_subscribed', 1)
+            ->where(function ($query) {
+                $zoneId = Config::get('zone_id');
+                if (!empty($zoneId)) {
+                    $query->where('zone_id', $zoneId);
+                }
+            });
+    }
+
+    public function servicemen(): HasMany
+    {
+        return $this->hasMany(Serviceman::class, 'provider_id');
+    }
+
+    public function reviews(): HasMany
+    {
+        return $this->hasMany(Review::class, 'provider_id', 'id');
+    }
+
+    public function storage()
+    {
+        return $this->hasOne(Storage::class, 'model_id');
+    }
+
+    public function packageSubscriptions()
+    {
+        return $this->hasOne(PackageSubscriber::class);
+    }
+    public function ignoredBookings()
+    {
+        return $this->hasMany(BookingIgnore::class);
+    }
+
+    public function autoAssignTimers(): HasMany
+    {
+        return $this->hasMany(ProviderBookingTimer::class, 'provider_id');
+    }
+
+
+    public function getLogoFullPathAttribute()
+    {
+        $image = $this->logo;
+        $defaultPath =  asset('public/assets/provider-module/img/user2x.png');
+
+        if (!$image) {
+            if (request()->is('api/*')) {
+                $defaultPath = null;
+            }
+            return $defaultPath;
+        }
+
+        $s3Storage = $this->storage;
+        $path = 'provider/logo/';
+        $imagePath = $path . $image;
+
+        return getSingleImageFullPath(imagePath: $imagePath, s3Storage: $s3Storage, defaultPath: $defaultPath);
+    }
+
+    public function getCoverImageFullPathAttribute()
+    {
+        $image = $this->cover_image;
+        $defaultPath =  asset('public/assets/provider-module/img/user2x.png');
+
+        if (!$image) {
+            if (request()->is('api/*')) {
+                $defaultPath = null;
+            }
+            return $defaultPath;
+        }
+
+        $s3Storage = $this->storage;
+        $path = 'provider/logo/';
+        $imagePath = $path . $image;
+
+        return getSingleImageFullPath(imagePath: $imagePath, s3Storage: $s3Storage, defaultPath: $defaultPath);
+    }
+
+    public static function boot()
+    {
+        parent::boot();
+
+        self::creating(function ($model) {
+            // ... code here
+        });
+
+        self::created(function ($model) {
+            // ... code here
+        });
+
+        // Provider ka is_active status change hone par uske sab subscribed_services ko sync karo:
+        // - is_active=0 (Off) → sab services inactive (is_subscribed=0)
+        // - is_active=1 (On) → sab services active (is_subscribed=1)
+        // Ye nextBookingEligibility() ke saath kaam karega — agar subscription expire hai toh
+        // provider list mein nahi ayega bhale is_active=1 ho.
+        self::updating(function ($model) {
+            if ($model->isDirty('is_active')) {
+                $newStatus = (int) $model->is_active;
+                DB::table('subscribed_services')->where(['provider_id' => $model->id])->update(['is_subscribed' => $newStatus]);
+            }
+        });
+
+        self::updated(function ($model) {
+            // ... code here
+        });
+
+        self::deleting(function ($model) {
+            // ... code here
+        });
+
+        self::deleted(function ($model) {
+            $model->servicemen->each(function ($serviceman) {
+                $serviceman->user->update(['is_active' => 0]);
+            });
+        });
+
+        static::saved(function ($model) {
+            $storageType = getDisk();
+            if($model->isDirty('logo') && $storageType != 'public'){
+                saveSingleImageDataToStorage(model: $model, modelColumn : 'logo', storageType : $storageType);
+            }
+        });
+    }
+}

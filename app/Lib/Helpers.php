@@ -1,0 +1,3978 @@
+<?php
+
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Modules\BookingModule\Entities\Booking;
+use Modules\BookingModule\Entities\BookingRepeat;
+use Modules\BookingModule\Entities\BookingServiceman;
+use Modules\BookingModule\Entities\SubscriptionSubscriberBooking;
+use Modules\BusinessSettingsModule\Entities\NotificationSetup;
+use Modules\BusinessSettingsModule\Entities\PackageSubscriber;
+use Modules\BusinessSettingsModule\Entities\SettingsTutorials;
+use Modules\PaymentModule\Entities\Bonus;
+use Modules\PaymentModule\Entities\Setting;
+use Modules\ProviderManagement\Entities\Provider;
+use Modules\ProviderManagement\Entities\ProviderBookingTimer;
+use Modules\ProviderManagement\Entities\SubscribedService;
+use Modules\UserManagement\Entities\Serviceman;
+use Modules\UserManagement\Entities\User;
+use Brian2694\Toastr\Facades\Toastr;
+use Illuminate\Http\UploadedFile;
+
+if (!function_exists('translate')) {
+    function translate($key)
+    {
+        try {
+            $local = app()->getLocale();
+            $cacheKey = 'lang_array_' . $local;
+            $lang_array = cache()->remember($cacheKey, 86400, function() use ($local) {
+                return include(base_path('resources/lang/' . $local . '/lang.php'));
+            });
+            $processed_key = ucfirst(str_replace('_', ' ', str_ireplace(['\'', '"', ';', '<', '>', '?'], ' ', $key)));
+            if (!array_key_exists($key, $lang_array)) {
+                $lang_array[$key] = $processed_key;
+                cache()->put($cacheKey, $lang_array, 86400);
+                $result = $processed_key;
+            } else {
+                $result = $lang_array[$key];
+            }
+            return $result;
+        } catch (\Exception $exception) {
+            return $key;
+        }
+    }
+}
+
+if (!function_exists('bs_data')) {
+    function bs_data($settings, $key, $required = 0)
+    {
+        try {
+            if (config('app.env') == 'local' || config('app.env') == 'live' || $required) {
+                $config = $settings->where('key_name', $key)->first()->live_values;
+            } else {
+                $config = null;
+            }
+
+        } catch (Exception $exception) {
+            return null;
+        }
+
+        return (isset($config)) ? $config : null;
+    }
+}
+
+if (!function_exists('bs_data_text')) {
+    function bs_data_text($settings, $key, $required = 0)
+    {
+        try {
+            if (config('app.env') == 'local' || config('app.env') == 'live' || $required) {
+                $config = $settings->where('key', $key)->first()->value;
+            } else {
+                $config = null;
+            }
+
+        } catch (Exception $exception) {
+            return null;
+        }
+
+        return (isset($config)) ? $config : null;
+    }
+}
+
+if (!function_exists('error_processor')) {
+    function error_processor($validator)
+    {
+        $errors = [];
+        foreach ($validator->errors()->getMessages() as $index => $error) {
+            $errors[] = ['error_code' => $index, 'message' => translate($error[0])];
+        }
+        return $errors;
+    }
+}
+
+if (!function_exists('get_path')) {
+    function get_path($type)
+    {
+        if ($type == 'public') {
+            return url('/') . '/public';
+        }
+
+        return url('/');
+    }
+}
+
+if (!function_exists('response_formatter')) {
+    function response_formatter($constant, array|object|null $content = null, $errors = []): array
+    {
+        $constant = [
+            'response_code' => $constant['response_code'],
+            'message' => translate($constant['message']),
+        ];
+        $constant['content'] = $content;
+        $constant['errors'] = $errors;
+
+        return $constant;
+    }
+}
+
+if (!function_exists('getDisk')) {
+    function getDisk()
+    {
+        $storageType = business_config('storage_connection_type', 'storage_settings');
+        return isset($storageType) ? ($storageType->live_values == 's3' ? 's3' : 'public') : 'public';
+    }
+}
+
+if (!function_exists('file_uploader')) {
+//    function file_uploader(string $dir, string $format, array|object|null $image = null, ?string $old_image = null)
+//    {
+//        if ($image == null) return $old_image ?? 'def.png';
+//
+//        if (isset($old_image)) Storage::disk(getDisk())->delete($dir . $old_image);
+//
+//        $imageName = \Carbon\Carbon::now()->toDateString() . "-" . uniqid() . "." . $format;
+//
+//        try {
+//            if (!Storage::disk(getDisk())->exists($dir)) {
+//                Storage::disk(getDisk())->makeDirectory($dir);
+//            }
+//            Storage::disk(getDisk())->put($dir . $imageName, file_get_contents($image));
+//        }catch (Exception $exception){
+//            if (getDisk() == 's3'){
+//                Toastr::error(translate('Image upload failed. Please check S3 credentials.'));
+//                return $old_image ?? 'def.png';
+//            }
+//        }
+//        return $imageName;
+//    }
+
+    function file_uploader(string $dir, string $format, array|object|null $image = null, ?string $old_image = null)
+    {
+        if ($image == null) {
+            return $old_image ?? 'def.png';
+        }
+
+        $disk = getDisk();
+        $dir  = rtrim($dir, '/') . '/';
+
+        // If old file exists, delete before uploading new
+        if ($old_image) {
+            Storage::disk($disk)->delete($dir . $old_image);
+        }
+
+        /**
+         * 🚫 If the file is NOT an image → upload normally (PDF, Doc, Zip, etc.)
+         */
+        if (!str_starts_with($image->getMimeType(), 'image/')) {
+
+            $imageName = now()->toDateString() . "-" . uniqid() . "." . $format;
+
+            try {
+                if (!Storage::disk($disk)->exists($dir)) {
+                    Storage::disk($disk)->makeDirectory($dir);
+                }
+                Storage::disk($disk)->put($dir . $imageName, file_get_contents($image));
+            } catch (\Exception $exception) {
+                if ($disk == 's3') {
+                    Toastr::error(translate('File upload failed. Please check S3 credentials.'));
+                }
+                return $old_image ?? 'def.png';
+            }
+
+            return $imageName; // RETURN HERE ✔
+        }
+
+        /**
+         * If the file IS an image → process + convert
+         */
+        $sourcePath = $image instanceof \Illuminate\Http\UploadedFile
+            ? $image->getRealPath()
+            : $image;
+
+        $info = @getimagesize($sourcePath);
+        if (!$info || empty($info['mime'])) {
+            return $old_image ?? 'def.png';
+        }
+
+        $mime = strtolower($info['mime']);
+
+        $format = match ($mime) {
+            'image/webp' => 'webp',
+            'image/gif'  => 'gif', // don't break animations
+            default      => $format,
+        };
+
+        $imageName = now()->toDateString() . "-" . uniqid() . "." . $format;
+        $savePath  = storage_path("app/{$disk}/{$dir}{$imageName}");
+
+        // Ensure folder exists
+        if (!Storage::disk($disk)->exists($dir)) {
+            Storage::disk($disk)->makeDirectory($dir);
+        }
+
+        /**
+         *  GIF & already-WEBP → copy only (no convert)
+         */
+        if ($mime === 'image/gif' || ($mime === 'image/webp' && $format === 'webp')) {
+            if (!copy($sourcePath, $savePath)) {
+                return $old_image ?? 'def.png';
+            }
+            Storage::disk($disk)->put($dir . $imageName, file_get_contents($savePath));
+            return $imageName;
+        }
+
+        /**
+         * Convert other images to GD for processing
+         */
+        $gdImage = match ($mime) {
+            'image/jpeg' => imagecreatefromjpeg($sourcePath),
+            'image/png'  => imagecreatefrompng($sourcePath),
+            'image/webp' => imagecreatefromwebp($sourcePath),
+            default      => null
+        };
+
+        if (!$gdImage) return $old_image ?? 'def.png';
+
+        if (in_array($mime, ['image/png', 'image/webp'])) {
+            imagealphablending($gdImage, false);
+            imagesavealpha($gdImage, true);
+        }
+
+        /**
+         *  Resize if too large
+         */
+        $maxSize = 2500;
+        $w = imagesx($gdImage);
+        $h = imagesy($gdImage);
+
+        if ($w > $maxSize || $h > $maxSize) {
+            $ratio = min($maxSize / $w, $maxSize / $h);
+            $nw = (int)($w * $ratio);
+            $nh = (int)($h * $ratio);
+
+            $temp = imagecreatetruecolor($nw, $nh);
+            imagealphablending($temp, false);
+            imagesavealpha($temp, true);
+
+            imagecopyresampled($temp, $gdImage, 0, 0, 0, 0, $nw, $nh, $w, $h);
+
+            imagedestroy($gdImage);
+            $gdImage = $temp;
+        }
+
+        /**
+         *  imagewebp()/imagepng() on a palette (indexed) source throws
+         *  "Palette image not supported by webp" -> promote to truecolor first.
+         */
+        if (!imageistruecolor($gdImage)) {
+            $pw = imagesx($gdImage);
+            $ph = imagesy($gdImage);
+
+            $trueColor = imagecreatetruecolor($pw, $ph);
+            imagealphablending($trueColor, false);
+            imagesavealpha($trueColor, true);
+            imagecopy($trueColor, $gdImage, 0, 0, 0, 0, $pw, $ph);
+
+            imagedestroy($gdImage);
+            $gdImage = $trueColor;
+        }
+
+        /**
+         *  Save final image (convert to webp/png/jpg)
+         */
+        $saved = match ($format) {
+            'jpg','jpeg' => imagejpeg($gdImage, $savePath, 85),
+            'png'        => imagepng($gdImage, $savePath, -1),
+            'webp'       => imagewebp($gdImage, $savePath, 78),
+            default      => false,
+        };
+
+        imagedestroy($gdImage);
+
+        if (!$saved) {
+            if ($disk == 's3') {
+                Toastr::error(translate('Image upload failed. Please check S3 credentials.'));
+            }
+            return $old_image ?? 'def.png';
+        }
+
+        Storage::disk($disk)->put($dir . $imageName, file_get_contents($savePath));
+
+        return $imageName; // FINAL RETURN ✔
+    }
+
+}
+
+if (!function_exists('file_remover')) {
+    function file_remover(string $dir, $image): bool
+    {
+        if (!isset($image)) return true;
+
+        if (is_array($image)) {
+            foreach ($image as $img) {
+                file_remover($dir, $img);
+            }
+        } else {
+            if (Storage::disk('public')->exists($dir . $image)) Storage::disk('public')->delete($dir . $image);
+
+            try {
+                if (Storage::disk('s3')->exists($dir . $image)) Storage::disk('s3')->delete($dir . $image);
+            } catch (Exception $e) {
+
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('divnum')) {
+    function divnum($numerator, $denominator)
+    {
+        return $denominator == 0 ? 0 : ($numerator / $denominator);
+    }
+}
+
+if (!function_exists('access_checker')) {
+    function access_checker($module)
+    {
+        return true;
+        if (auth()->user()->user_type == 'super-admin') {
+            return true;
+        } elseif (auth()->user()->roles->count() > 0) {
+            $modules = auth()->user()->roles[0]->modules;
+            if (in_array($module, $modules)) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+    }
+}
+
+if (!function_exists('exc_handler')) {
+    function exc_handler($data)
+    {
+        try {
+            $response = $data;
+        } catch (Exception $exception) {
+            $response = translate('not_available');
+        }
+        return $response;
+    }
+}
+
+if (!function_exists('get_add_money_bonus')) {
+    function get_add_money_bonus($amount)
+    {
+        $bonuses = Bonus::where('is_active', 1)
+            ->whereDate('start_date', '<=', now())
+            ->whereDate('end_date', '>=', now())
+            ->where('minimum_add_amount', '<=', $amount)
+            ->get();
+
+        $bonuses = $bonuses->where('minimum_add_amount', $bonuses->max('minimum_add_amount'));
+
+        foreach ($bonuses as $key => $item) {
+            $item->applied_bonus_amount = $item->bonus_amount_type == 'percent' ? ($amount * $item->bonus_amount) / 100 : $item->bonus_amount;
+
+            if ($item->bonus_amount_type == 'percent' && $item->applied_bonus_amount > $item->maximum_bonus_amount) {
+                $item->applied_bonus_amount = $item->maximum_bonus_amount;
+            }
+        }
+
+        return $bonuses->max('applied_bonus_amount') ?? 0;
+    }
+}
+
+if (!function_exists('get_distance')) {
+    function get_distance(array $originCoordinates, array $destinationCoordinates, $unit = 'K'): float
+    {
+        $lat1 = (float)$originCoordinates[0];
+        $lat2 = (float)$destinationCoordinates[0];
+        $lon1 = (float)$originCoordinates[1];
+        $lon2 = (float)$destinationCoordinates[1];
+
+        if (($lat1 == $lat2) && ($lon1 == $lon2)) {
+            return 0;
+        } else {
+            $theta = $lon1 - $lon2;
+            $dist = sin(deg2rad($lat1)) * sin(deg2rad($lat2)) + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * cos(deg2rad($theta));
+            $dist = acos($dist);
+            $dist = rad2deg($dist);
+            $miles = $dist * 60 * 1.1515;
+            $unit = strtoupper($unit);
+            if ($unit == "K") {
+                return ($miles * 1.609344);
+            } else if ($unit == "N") {
+                return ($miles * 0.8684);
+            } else {
+                return $miles;
+            }
+        }
+    }
+}
+
+if (!function_exists('provider_warning_amount_calculate')) {
+    function provider_warning_amount_calculate($payable, $receivable): bool|string
+    {
+        if ($payable > $receivable) {
+            $limit_amount = (business_config('max_cash_in_hand_limit_provider', 'provider_config'))->live_values ?? 0;
+            $amount = $payable - $receivable;
+
+            $percentage_80 = 0.8 * $limit_amount;
+            $percentage_100 = $limit_amount;
+
+            $warningType = '';
+
+            if ($amount >= $percentage_80) {
+                $warningType = '80_percent';
+            }
+
+            if ($amount >= $percentage_100) {
+                $warningType = '100_percent';
+            }
+            return $warningType;
+        }
+        return false;
+    }
+}
+
+if (!function_exists('remove_invalid_charcaters')) {
+    function remove_invalid_charcaters($str): array|string
+    {
+        return str_ireplace(['\'', '"', ',', ';', '<', '>', '?'], ' ', $str);
+    }
+}
+
+if (!function_exists('text_variable_data_format')) {
+    function text_variable_data_format($title, $booking_id, ?string $type = null, array|object|string|null $data = null, ?string $bookingType = null): array|string
+    {
+        $replaceMap = [
+            '{{providerName}}' => '',
+            '{{scheduleTime}}' => '',
+            '{{userName}}' => '',
+            '{{zoneName}}' => '',
+            '{{serviceManName}}' => '',
+        ];
+
+        if ($type == 'booking' || $type == 'offline-payment') {
+            $booking = null;
+
+            if ($bookingType == 'repeat') {
+                $booking = BookingRepeat::find($booking_id) ?? Booking::find($booking_id);
+            } else {
+                $booking = Booking::find($booking_id);
+            }
+
+            if (!$booking) {
+                return $title;
+            }
+
+            $replaceMap['{{providerName}}'] = $booking?->provider?->company_name ?? '';
+            $replaceMap['{{bookingId}}'] = $booking->readable_id;
+            $replaceMap['{{scheduleTime}}'] = $booking->service_schedule;
+
+            if ($bookingType == 'repeat') {
+                if ($booking->booking) {
+                    $replaceMap['{{userName}}'] = $booking->booking->customer ? $booking->booking->customer->first_name . ' ' . $booking->booking->customer->last_name : '';
+                    $replaceMap['{{zoneName}}'] = $booking->booking->zone?->name ?? '';
+                } else {
+                    $replaceMap['{{userName}}'] = $booking->customer?->first_name . ' ' . $booking->customer?->last_name;
+                    $replaceMap['{{zoneName}}'] = $booking->zone?->name;
+                }
+            } else {
+                $replaceMap['{{userName}}'] = $booking->customer?->first_name . ' ' . $booking->customer?->last_name;
+                $replaceMap['{{zoneName}}'] = $booking->zone?->name;
+            }
+
+            $replaceMap['{{serviceManName}}'] = $booking?->serviceman?->user?->first_name . ' ' . $booking?->serviceman?->user?->last_name;
+
+        } else {
+            if (is_array($data) && !empty($data)) {
+                $replaceMap['{{providerName}}'] = $data['provider_name'] ?? '';
+                $replaceMap['{{scheduleTime}}'] = $data['schedule_time'] ?? '';
+                $replaceMap['{{userName}}'] = $data['user_name'] ?? '';
+                $replaceMap['{{zoneName}}'] = $data['zone_name'] ?? '';
+                $replaceMap['{{serviceManName}}'] = $data['service_man_name'] ?? '';
+            }
+        }
+
+        $formattedTitle = str_replace(array_keys($replaceMap), array_values($replaceMap), $title);
+
+        return ($formattedTitle === $title) ? $title : $formattedTitle;
+    }
+}
+
+if (!function_exists('config_settingss')) {
+    function config_settingss($key, $settings_type)
+    {
+        try {
+            $config = DB::table('addon_settings')->where('key_name', $key)
+                ->where('settings_type', $settings_type)->first();
+        } catch (Exception $exception) {
+            return null;
+        }
+
+        return (isset($config)) ? $config : null;
+    }
+}
+
+if (!function_exists('onErrorImage')) {
+    function onErrorImage($data, $src, $error_src ,$path)
+    {
+        if(isset($data) && strlen($data) >1 && Storage::disk('public')->exists($path.$data)){
+            return $src;
+        }
+        return $error_src;
+    }
+}
+
+if (!function_exists('getSuperAdminId')) {
+    function getSuperAdminId()
+    {
+        return User::where('user_type', ADMIN_USER_TYPES[0])->first()->id;
+    }
+}
+
+if (!function_exists('getServiceFee')) {
+    function getServiceFee()
+    {
+        $additionalCharge = 0;
+        if ((business_config('booking_additional_charge', 'booking_setup'))?->live_values) {
+            $additionalCharge = (business_config('additional_charge_fee_amount', 'booking_setup'))?->live_values;
+        }
+        return $additionalCharge;
+    }
+}
+
+if (!function_exists('formatSubscriptionPackage')) {
+    function formatSubscriptionPackage($subscriptionPackage, $features)
+    {
+        $featureList = [];
+        foreach ($features as $feature) {
+            $featureExists = $subscriptionPackage->subscriptionPackageFeature->contains(function ($value) use ($feature) {
+                return $value->feature == $feature['key'];
+            });
+            if ($featureExists) {
+                $featureList[] = $feature['value'];
+            }
+        }
+
+        $bookingLimit = 'Unlimited Bookings';
+        $categoryLimit = 'Unlimited Service Sub Categories';
+
+        foreach ($subscriptionPackage->subscriptionPackageLimit as $limit) {
+            if ($limit->key === 'booking' && $limit->is_limited) {
+                $bookingLimit = $limit->limit_count . ' Booking Limit';
+            }
+            if ($limit->key === 'category' && $limit->is_limited) {
+                $categoryLimit = $limit->limit_count . ' Sub Category Limit';
+            }
+        }
+
+        $featureList[] = $bookingLimit;
+        $featureList[] = $categoryLimit;
+
+        $subscriptionPackage['feature_list'] = $featureList;
+
+        unset($subscriptionPackage->subscriptionPackageFeature);
+        unset($subscriptionPackage->subscriptionPackageLimit);
+
+        return $subscriptionPackage;
+    }
+}
+
+if (!function_exists('subscriptionFeatureList')) {
+    function subscriptionFeatureList($subscription, $features): array
+    {
+        $categoryCount = 0;
+        $bookingCount = 0;
+
+        $featureList = [];
+        $limitFeature = [
+            'booking' => 'Unlimited',
+            'category' => 'Unlimited'
+        ];
+        $limitLeft = [
+            'booking' => 0,
+            'category' => 0
+        ];
+
+        foreach ($features as $feature) {
+            $featureExists = $subscription->subscriptionPackageFeature->contains(function ($value) use ($feature) {
+                return $value->feature == $feature['key'];
+            });
+            if ($featureExists) {
+                $featureList[] = $feature['key'];
+            }
+        }
+
+        $featureList[] = 'booking';
+        $featureList[] = 'category';
+
+        foreach ($subscription->subscriptionPackageLimit as $limit) {
+            if ($limit->key === 'booking' && $limit->is_limited) {
+                $limitFeature['booking'] = $limit->limit_count;
+                $limitLeft['booking'] = $limit->limit_count - $bookingCount;
+            }
+            if ($limit->key === 'category' && $limit->is_limited) {
+                $limitFeature['category'] = $limit->limit_count;
+                $limitLeft['category'] = $limit->limit_count - $categoryCount;
+            }
+        }
+
+        $subscription->feature_list = $featureList;
+        $subscription->feature_limit = $limitFeature;
+
+        unset($subscription->subscriptionPackageFeature);
+        unset($subscription->subscriptionPackageLimit);
+
+        return $subscription->toArray();
+    }
+}
+
+
+
+if (!function_exists('packageSubscriber')) {
+    function packageSubscriber($packageSubscriber, $features)
+    {
+        $providerId = $packageSubscriber->provider_id;
+        $packageSubscriber['total_amount'] = $packageSubscriber?->logs->where('provider_id', $providerId)->sum('package_price');
+        $packageSubscriber['number_of_uses'] = $packageSubscriber?->logs->where('provider_id', $providerId)->count();
+        $packageSubscriber['description'] = $packageSubscriber?->package->description;
+
+        $featureList = [];
+        foreach ($features as $feature) {
+            $featureExists = $packageSubscriber->feature->contains(function ($value) use ($feature) {
+                return $value->feature == $feature['key'];
+            });
+            if ($featureExists) {
+                $featureList[] = $feature['value'];
+            }
+        }
+        $bookingLimit = 'Unlimited Bookings';
+        $categoryLimit = 'Unlimited Service Categories';
+
+        foreach ($packageSubscriber->limits as $limit) {
+            if ($limit->key === 'booking' && $limit->is_limited) {
+                $bookingLimit = $limit->limit_count . ' Booking Limit';
+            }
+            if ($limit->key === 'category' && $limit->is_limited) {
+                $categoryLimit = $limit->limit_count . ' Category Limit';
+            }
+        }
+
+        $featureList[] = $bookingLimit;
+        $featureList[] = $categoryLimit;
+
+        $packageSubscriber['feature_list'] = $featureList;
+
+        unset($packageSubscriber->feature);
+        unset($packageSubscriber->limits);
+        unset($packageSubscriber->logs);
+        unset($packageSubscriber->package);
+
+        return $packageSubscriber;
+    }
+}
+
+if (!function_exists('apiPackageSubscriber')) {
+    function apiPackageSubscriber($packageSubscriber, $features)
+    {
+        $categoryCount = 0;
+        $bookingCount = 0;
+
+        $startDate = $packageSubscriber?->package_start_date;
+        $endDate = $packageSubscriber?->package_end_date;
+        $providerId = $packageSubscriber?->provider_id;
+        $providerUserId = $packageSubscriber?->provider->user_id;
+
+        $packageSubscriber['total_amount'] = $packageSubscriber?->logs->sum('package_price');
+        $packageSubscriber['number_of_uses'] = $packageSubscriber?->logs->count();
+        $packageSubscriber['description'] = $packageSubscriber?->package->description;
+        $packageSubscriber['is_paid'] = $packageSubscriber?->payment?->where('id', $packageSubscriber->payment_id)->value('is_paid');
+
+        if ($startDate && $endDate) {
+            $bookingCount = SubscriptionSubscriberBooking::where('provider_id', $providerId)
+                ->where('package_subscriber_log_id', $packageSubscriber?->package_subscriber_log_id)
+                ->when($startDate && $endDate, function ($query) use ($startDate, $endDate) {
+                    $startDate = Carbon::parse($startDate)->startOfDay();
+                    $endDate = Carbon::parse($endDate)->endOfDay();
+                    return $query->whereBetween('updated_at', [$startDate, $endDate]);
+                })
+                ->count();
+
+            $categoryCount = SubscribedService::where('provider_id', $providerId)->where('is_subscribed', 1)
+                ->when($startDate && $endDate, function ($query) use ($startDate, $endDate) {
+                    $startDate = Carbon::parse($startDate)->startOfDay();
+                    $endDate = Carbon::parse($endDate)->endOfDay();
+                    return $query->whereBetween('updated_at', [$startDate, $endDate]);
+                })
+                ->count();
+        }
+
+        $featureList = [];
+        $limitFeature = [
+            'booking' => 'Unlimited',
+            'category' => 'Unlimited'
+        ];
+        $limitLeft = [
+            'booking' => 0,
+            'category' => 0
+        ];
+
+        foreach ($features as $feature) {
+            $featureExists = $packageSubscriber->feature->contains(function ($value) use ($feature) {
+                return $value->feature == $feature['key'];
+            });
+            if ($featureExists) {
+                $featureList[] = $feature['key'];
+            }
+        }
+
+        $featureList[] = 'booking';
+        $featureList[] = 'category';
+
+        foreach ($packageSubscriber->limits->where('provider_id', $providerId) as $limit) {
+            if ($limit->key === 'booking' && $limit->is_limited) {
+                $limitFeature['booking'] = $limit->limit_count;
+                $limitLeft['booking'] = $limit->limit_count - $bookingCount;
+            }
+            if ($limit->key === 'category' && $limit->is_limited) {
+                $limitFeature['category'] = $limit->limit_count;
+                $limitLeft['category'] = $limit->limit_count - $categoryCount;
+            }
+        }
+
+        $packageSubscriber['feature_list'] = $featureList;
+        $packageSubscriber['feature_limit'] = $limitFeature;
+        $packageSubscriber['feature_limit_left'] = $limitLeft;
+
+        unset($packageSubscriber->feature);
+        unset($packageSubscriber->limits);
+        unset($packageSubscriber->logs);
+        unset($packageSubscriber->package);
+        unset($packageSubscriber->payment);
+
+        return $packageSubscriber;
+    }
+}
+
+if (!function_exists('saveSingleImageDataToStorage')) {
+    function saveSingleImageDataToStorage($model, $modelColumn, $storageType)
+    {
+        \Modules\BusinessSettingsModule\Entities\Storage::updateOrCreate(
+            [
+                'model' => get_class($model),
+                'model_id' => $model->id,
+                'model_column' => $modelColumn
+            ],
+            [
+                'storage_type' => $storageType,
+                'created_at' => now(),
+                'updated_at' => now()
+            ]
+        );
+        return true;
+    }
+}
+
+if (!function_exists('saveBusinessImageDataToStorage')) {
+    function saveBusinessImageDataToStorage($model, $modelColumn, $storageType)
+    {
+        \Modules\BusinessSettingsModule\Entities\Storage::updateOrCreate(
+            [
+                'model' => get_class($model),
+                'model_column' => $modelColumn
+            ],
+            [
+                'model_id' => $model->id,
+                'storage_type' => $storageType,
+                'created_at' => now(),
+                'updated_at' => now()
+            ]
+        );
+        return true;
+    }
+}
+
+if (!function_exists('getSingleImageFullPath')) {
+    function getSingleImageFullPath($imagePath, array|object|null $s3Storage = null, ?string $defaultPath = null, ?bool $page = null)
+    {
+        try {
+            if ($s3Storage && $s3Storage->storage_type == 's3' && \Illuminate\Support\Facades\Storage::disk('s3')->exists($imagePath)) {
+                return Storage::disk('s3')->url($imagePath);
+//                $awsUrl = rtrim(config('filesystems.disks.s3.url'), '/');
+//                $awsBucket = config('filesystems.disks.s3.bucket');
+//                return $awsUrl . '/' . $awsBucket . '/' . $imagePath;
+            }
+        } catch (\Exception $exception) {
+            //
+        }
+        if (\Illuminate\Support\Facades\Storage::disk('public')->exists($imagePath)) {
+            return asset('storage/' . $imagePath);
+        } else {
+
+            if (request()->is('api/*')) {
+                if ($page) {
+                    return $defaultPath;
+                }
+
+                return null;
+            }
+            return $defaultPath;
+        }
+    }
+}
+
+if (!function_exists('getIdentityImageFullPath')) {
+    function getIdentityImageFullPath($identityImages, $path, ?string $defaultPath = null)
+    {
+
+        $identityImageFullPath = [];
+
+        foreach ($identityImages as $identityImage) {
+            $identityImage = is_array($identityImage) ? $identityImage : ['image' => $identityImage, 'storage' => 'public'];
+            $imagePath = $path . $identityImage['image'];
+            $fullPath = $defaultPath;
+
+            try {
+                if ($identityImage['storage'] == 's3' && \Illuminate\Support\Facades\Storage::disk('s3')->exists($imagePath)) {
+                    $fullPath = Storage::disk('s3')->url($imagePath);
+                }
+            }catch(\Exception $exception){
+                //
+            }
+
+            if ($identityImage['storage'] == 'public' && \Illuminate\Support\Facades\Storage::disk('public')->exists($imagePath)) {
+                $fullPath = asset('storage/' . $imagePath);
+            }
+
+            if (request()->is('api/*') && $fullPath == $defaultPath) {
+                continue;
+            }else{
+                $identityImageFullPath[] = $fullPath;
+            }
+        }
+
+        return $identityImageFullPath;
+    }
+}
+
+if (!function_exists('getBusinessSettingsImageFullPath')) {
+    function getBusinessSettingsImageFullPath($key, $settingType, $path, ?string $defaultPath = null)
+    {
+        $cacheKey = 'bs_image_' . $key . '_' . $settingType;
+        $image = cache()->remember($cacheKey, 3600, fn() => \Modules\BusinessSettingsModule\Entities\BusinessSettings::with('storage')->where(['key_name' => $key, 'settings_type' => $settingType])->first());
+        if (!$image) {
+            if (request()->is('api/*')) {
+                return null;
+            }
+            return asset($defaultPath);
+        }
+
+        $imagePath = $path . $image->live_values;
+        $s3Storage = $image->storage;
+
+        try {
+            if ($s3Storage && $s3Storage->storage_type == 's3' && \Illuminate\Support\Facades\Storage::disk('s3')->exists($imagePath)) {
+                return Storage::disk('s3')->url($imagePath);
+//                $awsUrl = rtrim(config('filesystems.disks.s3.url'), '/');
+//                $awsBucket = config('filesystems.disks.s3.bucket');
+//                return $awsUrl . '/' . $awsBucket . '/' . $imagePath;
+            }
+        }catch(\Exception $exception){
+            //
+        }
+
+        if (\Illuminate\Support\Facades\Storage::disk('public')->exists($imagePath)) {
+            return asset('storage/' . $imagePath);
+        } else {
+            if (request()->is('api/*')) {
+                return null;
+            }
+            return asset($defaultPath);
+        }
+    }
+}
+if (!function_exists('getDataSettingsImageFullPath')) {
+    function getDataSettingsImageFullPath($key, $settingType, $path, ?string $defaultPath = null)
+    {
+        $image = \Modules\BusinessSettingsModule\Entities\DataSetting::with('storage')->where(['key' => $key, 'type' => $settingType])->first();
+        if (!$image) {
+            if (request()->is('api/*')) {
+                return null;
+            }
+            return asset($defaultPath);
+        }
+
+        $imagePath = $path . $image->value;
+        $s3Storage = $image->storage;
+
+        try {
+            if ($s3Storage && $s3Storage->storage_type == 's3' && \Illuminate\Support\Facades\Storage::disk('s3')->exists($imagePath)) {
+                return Storage::disk('s3')->url($imagePath);
+//                $awsUrl = rtrim(config('filesystems.disks.s3.url'), '/');
+//                $awsBucket = config('filesystems.disks.s3.bucket');
+//                return $awsUrl . '/' . $awsBucket . '/' . $imagePath;
+            }
+        }catch(\Exception $exception){
+            //
+        }
+
+        if (\Illuminate\Support\Facades\Storage::disk('public')->exists($imagePath)) {
+            return asset('storage/' . $imagePath);
+        } else {
+            if (request()->is('api/*')) {
+                return null;
+            }
+            return asset($defaultPath);
+        }
+    }
+}
+
+if (!function_exists('getPaymentGatewayImageFullPath')) {
+    function getPaymentGatewayImageFullPath($key, $settingsType, ?string $defaultPath = null)
+    {
+        $addonSettings = \Modules\PaymentModule\Entities\Setting::where('key_name', $key)->where('settings_type', $settingsType)->first();
+        if (!$addonSettings) {
+            if (request()->is('api/*')) {
+                return null;
+            }
+            return asset($defaultPath);
+        }
+        $additionalData = $addonSettings['additional_data'] != null ? json_decode($addonSettings['additional_data']) : null;
+
+        if(!$additionalData)
+        {
+            return asset($defaultPath);
+        }
+
+        if ($additionalData){
+            if (!$additionalData->gateway_image){
+                return asset($defaultPath);
+            }
+        }
+
+        $path = 'payment_modules/gateway_image/';
+        $imagePath = $path . ($additionalData ? $additionalData->gateway_image : '');
+
+        $additionalData = [
+            'gateway_title' => $additionalData->gateway_title?? null,
+            'gateway_image' => $additionalData->gateway_image?? null,
+            'storage' => $additionalData->storage ?? 'public'
+        ];
+
+        try {
+            if ($additionalData['storage'] == 's3' && \Illuminate\Support\Facades\Storage::disk('s3')->exists($imagePath)) {
+                return Storage::disk('s3')->url($imagePath);
+//                $awsUrl = rtrim(config('filesystems.disks.s3.url'), '/');
+//                $awsBucket = config('filesystems.disks.s3.bucket');
+//                return $awsUrl . '/' . $awsBucket . '/' . $imagePath;
+            }
+        }catch(\Exception $exception){
+            //
+        }
+
+        if ($additionalData['storage'] == 'public' && \Illuminate\Support\Facades\Storage::disk('public')->exists($imagePath)) {
+            return asset('storage/' . $imagePath);
+        }
+
+        if (request()->is('api/*')) {
+            return null;
+        }
+
+        return asset($defaultPath);
+    }
+}
+
+
+if (!function_exists('nextBookingEligibility')) {
+    function nextBookingEligibility($providerId, $provider = null): bool
+    {
+        // Provider Subscribe OFF -> koi payment/subscription check nahi
+        // $provider (loaded model) pass karne par extra DB query skip hoti hai
+        $subscriptionRequired = $provider instanceof \Modules\ProviderManagement\Entities\Provider
+            ? ($provider->subscription_required ?? 1)
+            : \Modules\ProviderManagement\Entities\Provider::where('id', $providerId)->value('subscription_required');
+        if ((int) $subscriptionRequired === 0) {
+            return true;
+        }
+
+        $now = \Carbon\Carbon::now()->subDay();
+        $packageSubscriber = PackageSubscriber::where('provider_id', $providerId)->first();
+        $packageSubscriberLogId = $packageSubscriber?->package_subscriber_log_id;
+        $providerUserId = $packageSubscriber?->provider?->user_id;
+        $isPaid = $packageSubscriber?->payment?->where('id', $packageSubscriber?->payment_id)->value('is_paid');
+
+        if ($packageSubscriber && $packageSubscriber->payment_id != null) {
+            if ($isPaid){
+                if ($packageSubscriber->is_canceled){
+                    return false;
+                }
+                foreach ($packageSubscriber->limits->where('provider_id', $providerId) as $limit) {
+                    if ($limit->key === 'booking') {
+                        if ($limit->is_limited) {
+                            $limitLeft = $limit->limit_count;
+
+                            $startDate = $packageSubscriber->package_start_date;
+                            $endDate = $packageSubscriber->package_end_date;
+
+                            if ($startDate && $endDate) {
+                                if($now > $endDate){
+                                    return false;
+                                }
+
+//                                $bookingCount = SubscriptionSubscriberBooking::where('provider_id', $providerId)
+//                                    ->whereBetween('updated_at', [$startDate, $endDate])
+//                                    ->count();
+
+                                $bookingCount = SubscriptionSubscriberBooking::where('provider_id', $providerId)->where('package_subscriber_log_id',$packageSubscriberLogId)
+                                    ->whereBetween(DB::raw('DATE(updated_at)'), [date('Y-m-d', strtotime($startDate)), date('Y-m-d', strtotime($endDate))])
+                                    ->count();
+
+                                $leftBookingCount = $limitLeft - $bookingCount;
+                                if ($leftBookingCount > 0) {
+                                    return true;
+                                }
+                            }
+                        } else {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+        return true;
+    }
+}
+
+if (!function_exists('scheduleBookingEligibility')) {
+    function scheduleBookingEligibility($providerId, $provider = null): bool
+    {
+        // Provider Subscribe OFF -> subscription feature checks skip (pehle, taaki wasted query na ho)
+        $subscriptionRequired = $provider instanceof \Modules\ProviderManagement\Entities\Provider
+            ? ($provider->subscription_required ?? 1)
+            : \Modules\ProviderManagement\Entities\Provider::where('id', $providerId)->value('subscription_required');
+        if ((int) $subscriptionRequired === 0) {
+            return true;
+        }
+
+        $now = \Carbon\Carbon::now();
+        $packageSubscriber = PackageSubscriber::where('provider_id', $providerId)->first();
+
+        if ($packageSubscriber) {
+            if ($packageSubscriber->payment_id) {
+
+                if ($packageSubscriber->is_canceled){
+                    return false;
+                }
+
+                $startDate = $packageSubscriber->package_start_date;
+                $endDate = $packageSubscriber->package_end_date;
+
+                if ($startDate && $endDate) {
+                    if ($now > $endDate) {
+                        return false;
+                    }
+
+                    $featureExists = $packageSubscriber->feature->contains(function ($value) {
+                        return $value->feature === 'schedule_service';
+                    });
+
+                    if ($featureExists) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('chatEligibility')) {
+    function chatEligibility($providerId): bool
+    {
+        $subscriptionRequired = \Modules\ProviderManagement\Entities\Provider::where('id', $providerId)->value('subscription_required');
+        if ((int) $subscriptionRequired === 0) {
+            return true;
+        }
+
+        $now = \Carbon\Carbon::now();
+        $packageSubscriber = PackageSubscriber::where('provider_id', $providerId)->first();
+
+        if ($packageSubscriber) {
+            if ($packageSubscriber->payment_id) {
+
+                if ($packageSubscriber->is_canceled){
+                    return false;
+                }
+
+                $startDate = $packageSubscriber->package_start_date;
+                $endDate = $packageSubscriber->package_end_date;
+
+                if ($startDate && $endDate) {
+                    if ($now > $endDate) {
+                        return false;
+                    }
+
+                    $featureExists = $packageSubscriber->feature->contains(function ($value) {
+                        return $value->feature === 'chat';
+                    });
+
+                    if ($featureExists) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('advertisementsEligibility')) {
+    function advertisementsEligibility($providerId): bool
+    {
+        $subscriptionRequired = \Modules\ProviderManagement\Entities\Provider::where('id', $providerId)->value('subscription_required');
+        if ((int) $subscriptionRequired === 0) {
+            return true;
+        }
+
+        $now = \Carbon\Carbon::now();
+        $packageSubscriber = PackageSubscriber::where('provider_id', $providerId)->first();
+
+        if ($packageSubscriber) {
+            if ($packageSubscriber->payment_id) {
+
+                if ($packageSubscriber->is_canceled){
+                    return false;
+                }
+
+                $startDate = $packageSubscriber->package_start_date;
+                $endDate = $packageSubscriber->package_end_date;
+
+                if ($startDate && $endDate) {
+                    if ($now > $endDate) {
+                        return false;
+                    }
+
+                    $featureExists = $packageSubscriber->feature->contains(function ($value) {
+                        return $value->feature === 'advertisement';
+                    });
+
+                    if ($featureExists) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('providerCommissionPercentage')) {
+    /**
+     * Effective admin/system commission % for a provider.
+     * Independent Mode ON -> admin_commission_percent, else custom/default commission.
+     */
+    function providerCommissionPercentage($provider): float
+    {
+        if ((int) ($provider->independent_mode ?? 0) === 1) {
+            return (float) ($provider->admin_commission_percent ?? 0);
+        }
+
+        return (float) ($provider->commission_status == 1
+            ? $provider->commission_percentage
+            : (business_config('default_commission', 'business_information'))?->live_values ?? 0);
+    }
+}
+
+if (!function_exists('providerAdminCommission')) {
+    /**
+     * Admin/system commission amount for independent mode providers.
+     * Independent Mode: base * admin% + flat platform fee.
+     * Default mode: base * (custom/default %).
+     * Promotional cost adjustment stays with the caller.
+     */
+    function providerAdminCommission($provider, float $baseAmount): float
+    {
+        if ((int) ($provider->independent_mode ?? 0) === 1) {
+            return ($baseAmount * (float) ($provider->admin_commission_percent ?? 0)) / 100
+                + (float) ($provider->platform_fee_amount ?? 0);
+        }
+
+        return ($baseAmount * providerCommissionPercentage($provider)) / 100;
+    }
+}
+
+if (!function_exists('providerIsIndependent')) {
+    /**
+     * Provider runs on per-provider payment settings (wizard Step 4 ON).
+     */
+    function providerIsIndependent($provider): bool
+    {
+        return !empty($provider) && (int) ($provider->independent_mode ?? 0) === 1;
+    }
+}
+
+if (!function_exists('providerAllowedPaymentMethods')) {
+    /**
+     * Allowed payment methods for this provider as array of keys.
+     * NULL = no restriction (default mode / nothing configured).
+     */
+    function providerAllowedPaymentMethods($provider): ?array
+    {
+        if (!providerIsIndependent($provider)) {
+            return null;
+        }
+        $raw = $provider->allowed_payment_methods ?? null;
+        if (empty($raw)) {
+            return null;
+        }
+        $decoded = is_array($raw) ? $raw : json_decode($raw, true);
+        if (!is_array($decoded)) {
+            return null;
+        }
+        $decoded = array_values(array_filter($decoded, function ($item) {
+            return is_string($item) && $item !== '';
+        }));
+        return count($decoded) > 0 ? $decoded : null;
+    }
+}
+
+if (!function_exists('providerAllowsPaymentMethod')) {
+    /**
+     * Is this payment method allowed for the provider at checkout?
+     */
+    function providerAllowsPaymentMethod($provider, string $method): bool
+    {
+        $allowed = providerAllowedPaymentMethods($provider);
+        if ($allowed === null) {
+            return true;
+        }
+        return in_array($method, $allowed, true);
+    }
+}
+
+if (!function_exists('providerEffectiveTaxPercent')) {
+    /**
+     * Tax % for a cart/service line of this provider.
+     * Independent provider with tax_percent set -> override service tax.
+     * Otherwise -> service's own tax (existing behaviour, nothing changes).
+     */
+    function providerEffectiveTaxPercent($provider, float $serviceTax): float
+    {
+        if (providerIsIndependent($provider)
+            && $provider->tax_percent !== null
+            && $provider->tax_percent !== '') {
+            return (float) $provider->tax_percent;
+        }
+        return $serviceTax;
+    }
+}
+
+if (!function_exists('providerCustomFeesEnabled')) {
+    /**
+     * Is provider ke liye alag (per-provider) fees ON hain?
+     * Independent mode + wizard Step 4 ka "separate fees" toggle dono chahiye.
+     */
+    function providerCustomFeesEnabled($provider): bool
+    {
+        return providerIsIndependent($provider)
+            && (int) ($provider->custom_fees_enabled ?? 0) === 1;
+    }
+}
+
+if (!function_exists('providerBookingFee')) {
+    /**
+     * Customer-facing booking fee for this provider.
+     *  - Separate fees ON  -> provider ki fee strictly lagti hai (0 = koi fee nahi).
+     *  - Separate fees OFF -> legacy: fee > 0 ho to provider fee, warna null
+     *    (null = global booking_additional_charge flow, nothing changes).
+     *  - Independent hi nahi -> null (global flow).
+     */
+    function providerBookingFee($provider): ?float
+    {
+        if (!providerIsIndependent($provider)) {
+            return null;
+        }
+        if (providerCustomFeesEnabled($provider)) {
+            return max(0, (float) ($provider->booking_fee ?? 0));
+        }
+        $fee = (float) ($provider->booking_fee ?? 0);
+        return $fee > 0 ? $fee : null;
+    }
+}
+
+if (!function_exists('providerBookingFeeLabel')) {
+    /**
+     * Is provider ka apna customer-facing fee label.
+     * null = global additional_charge_label_name use karo.
+     */
+    function providerBookingFeeLabel($provider): ?string
+    {
+        if (!providerCustomFeesEnabled($provider)) {
+            return null;
+        }
+        $label = trim((string) ($provider->booking_fee_label ?? ''));
+        return $label !== '' ? $label : null;
+    }
+}
+
+if (!function_exists('bookingExtraFee')) {
+    /**
+     * Customer-facing booking extra fee (flat charge added to booking total).
+     * Independent provider with booking_fee > 0 -> that fee, else global config
+     * (identical to the legacy behaviour).
+     */
+    function bookingExtraFee($provider): float
+    {
+        $providerFee = providerBookingFee($provider);
+        if ($providerFee !== null) {
+            return $providerFee;
+        }
+
+        if (business_config('booking_additional_charge', 'booking_setup')?->live_values) {
+            return (float) (business_config('additional_charge_fee_amount', 'booking_setup')?->live_values ?? 0);
+        }
+        return 0;
+    }
+}
+
+if (!function_exists('providerTaxForBooking')) {
+    /**
+     * Effective tax % for a booking/repeat-booking edit (provider resolved via
+     * booking->provider_id, memoised per request).
+     */
+    function providerTaxForBooking($booking, float $serviceTax): float
+    {
+        if (empty($booking) || empty($booking->provider_id)) {
+            return $serviceTax;
+        }
+        static $providerCache = [];
+        $providerId = (string) $booking->provider_id;
+        if (!array_key_exists($providerId, $providerCache)) {
+            $providerCache[$providerId] = \Modules\ProviderManagement\Entities\Provider::find($providerId);
+        }
+        return providerEffectiveTaxPercent($providerCache[$providerId], $serviceTax);
+    }
+}
+
+if (!function_exists('paymentGatewayOptions')) {
+    /**
+     * Payment method options (base methods + active digital gateways).
+     * Used by admin provider wizard (Step 4 gateway checkboxes) and client
+     * payment-config endpoint.
+     */
+    function paymentGatewayOptions(): array
+    {
+        $base = [
+            ['key' => 'cash_after_service', 'label' => 'Cash after service'],
+            ['key' => 'wallet_payment', 'label' => 'Wallet'],
+            ['key' => 'offline_payment', 'label' => 'Offline payment'],
+        ];
+
+        $digital = [];
+        try {
+            $rows = \DB::table('addon_settings')->where('settings_type', 'payment_config')->get();
+            foreach ($rows as $row) {
+                $additional = $row->additional_data ?? null;
+                if (is_string($additional)) {
+                    $additional = json_decode($additional, true);
+                }
+                $title = is_array($additional) ? ($additional['gateway_title'] ?? null) : null;
+                $digital[] = [
+                    'key' => $row->key_name,
+                    'label' => $title ?: ucwords(str_replace('_', ' ', $row->key_name)),
+                ];
+            }
+        } catch (\Throwable $e) {
+            $digital = [];
+        }
+
+        if (empty($digital)) {
+            foreach (PAYMENT_METHODS as $method) {
+                if (!in_array($method['key'], ['cash_after_service', 'wallet_payment', 'offline_payment'])) {
+                    $digital[] = ['key' => $method['key'], 'label' => ucwords(str_replace('_', ' ', $method['key']))];
+                }
+            }
+        }
+
+        return array_merge($base, $digital);
+    }
+}
+
+if (!function_exists('filterPaymentGatewaysForProvider')) {
+    /**
+     * Filter a client gateway list (each item has 'gateway' key) by provider's
+     * allowed payment methods. No restriction -> list unchanged.
+     */
+    function filterPaymentGatewaysForProvider($gateways, $provider)
+    {
+        $allowed = providerAllowedPaymentMethods($provider);
+        if ($allowed === null || !is_array($gateways)) {
+            return $gateways;
+        }
+        return collect($gateways)->filter(function ($gateway) use ($allowed) {
+            return in_array($gateway['gateway'] ?? '', $allowed, true);
+        })->values();
+    }
+}
+
+if (!function_exists('providerRejectsPaymentMethod')) {
+    /**
+     * true = ye payment method is provider ke liye allowed nahi (400 response
+     * bhejo). false = allowed (default mode me hamesha false).
+     *
+     * @return array|null [provider_id, method] jab reject karna ho, warna null
+     */
+    function providerRejectsPaymentMethod($providerId, string $method): ?array
+    {
+        if (empty($providerId) || empty($method)) {
+            return null;
+        }
+        static $providerCache = [];
+        $key = (string) $providerId;
+        if (!array_key_exists($key, $providerCache)) {
+            $providerCache[$key] = \Modules\ProviderManagement\Entities\Provider::find($providerId);
+        }
+        if (!providerAllowsPaymentMethod($providerCache[$key], $method)) {
+            return [(string) $providerId, $method];
+        }
+        return null;
+    }
+}
+
+if (!function_exists('mobileAppCheck')) {
+    function mobileAppCheck($user, $module): bool
+    {
+        if ($user) {
+            $provider = Provider::where('user_id', $user->id)->first();
+            if ($provider) {
+
+                $providerId = $provider->id;
+                $packageSubscriber = PackageSubscriber::where('provider_id', $providerId)->with('feature')->first();
+                if ($packageSubscriber) {
+                    $featureKeys = $packageSubscriber->feature->pluck('feature')->toArray();
+                    if (in_array($module, $featureKeys) ) {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+}
+
+if (!function_exists('sendDeviceNotificationPermission')) {
+    function sendDeviceNotificationPermission($providerId): bool
+    {
+        $providerSubscription = PackageSubscriber::where('provider_id', $providerId)->first();
+        $endDate = optional($providerSubscription)->package_end_date;
+        $canceled = optional($providerSubscription)->is_canceled;
+        $packageEndDate = $endDate ? Carbon::parse($endDate)->endOfDay() : null;
+        $currentDate = Carbon::now()->subDay();
+        $isPackageEnded = $packageEndDate ? $currentDate->diffInDays($packageEndDate, false) : null;
+        $scheduleBookingEligibility = nextBookingEligibility($providerId);
+
+        if ($providerSubscription) {
+            if ($isPackageEnded > 0 && !$canceled && $scheduleBookingEligibility) {
+                return true;
+            }else{
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('isNotificationActive')) {
+   function isNotificationActive(?string $providerId, string $key, string $type, string $userType): ?bool
+   {
+        $notificationSetup = NotificationSetup::where('key', $key)->where('user_type', $userType)->get();
+
+        foreach ($notificationSetup as $setup) {
+            $adminSettings = json_decode($setup->value);
+            $providerSettings = null;
+
+            if ($providerId) {
+                $providerSettings = $setup->providerNotifications()->where('provider_id', $providerId)->first();
+                $providerSettings = $providerSettings ? json_decode($providerSettings->value) : null;
+            }
+
+            $settingValue = $providerSettings->$type ?? $adminSettings->$type;
+
+            if (is_null($settingValue)) {
+                return false;
+            }
+
+            return (bool) $settingValue;
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('checkCurrency')) {
+   function checkCurrency($data, ?string $type = null)
+   {
+       $digitalPayment = business_config('digital_payment', 'service_setup')->live_values;
+       $publishedStatus = 0;
+
+       try {
+           $full_data = include('Modules/Gateways/Addon/info.php');
+           $publishedStatus = $full_data['is_published'] == 1 ? 1 : 0;
+       } catch (\Exception $exception) {
+       }
+
+       if($digitalPayment){
+           if($type === null) {
+               if ($publishedStatus == 1) {
+                   $methods = DB::table('addon_settings')->where('is_active', 1)->where('settings_type', 'payment_config')->get();
+                   $env = env('APP_ENV') == 'live' ? 'live' : 'test';
+                   $credentials = $env . '_values';
+
+               } else {
+                    $methods = DB::table('addon_settings')->where('is_active', 1)->whereIn('settings_type', ['payment_config'])->whereIn('key_name', array_column(DIGITAL_PAYMENT_METHODS, 'key'))->get();
+                   $env = env('APP_ENV') == 'live' ? 'live' : 'test';
+                   $credentials = $env . '_values';
+
+               }
+
+               $getData = [];
+               foreach ($methods as $method) {
+                   $credentialsData = json_decode($method->$credentials);
+                   $additional_data = json_decode($method->additional_data);
+                   if ($credentialsData?->status == 1) {
+                       $getData[] = [
+                           'gateway' => $method->key_name,
+                           'gateway_title' => $additional_data?->gateway_title,
+                           'gateway_image' => $additional_data?->gateway_image
+                       ];
+                   }
+               }
+
+               if (is_array($getData)) {
+                   foreach ($getData as $payment_gateway) {
+                       $supportedCurrencies = getPaymentGatewaySupportedCurrencies($payment_gateway['gateway']);
+                       if (!empty($supportedCurrencies) && !array_key_exists($data, $supportedCurrencies)) {
+                           return $payment_gateway['gateway'];
+                       }
+                   }
+               }
+           }
+           elseif($type == 'payment_gateway'){
+               $currency = business_config('currency_code', 'business_information')->live_values;
+               if(!empty(getPaymentGatewaySupportedCurrencies($data)) && array_key_exists($currency, getPaymentGatewaySupportedCurrencies($data))){
+                   return  $data;
+               }
+           }
+       }
+
+       return false;
+    }
+}
+
+if (!function_exists('getPaymentGatewaySupportedCurrencies')) {
+   function getPaymentGatewaySupportedCurrencies(?string $key = null): array
+   {
+       $paymentGateway = [
+           "amazon_pay" => [
+               "USD" => "United States Dollar",
+               "GBP" => "Pound Sterling",
+               "EUR" => "Euro",
+               "JPY" => "Japanese Yen",
+               "AUD" => "Australian Dollar",
+               "NZD" => "New Zealand Dollar",
+               "CAD" => "Canadian Dollar"
+           ],
+           "bkash" => [
+               "BDT" => "Bangladeshi Taka"
+           ],
+           "cashfree" => [
+               "INR" => "Indian Rupee"
+           ],
+           "ccavenue" => [
+               "INR" => "Indian Rupee"
+           ],
+           "ccavenue" => [
+               "INR" => "Indian Rupee"
+           ],
+           "esewa" => [
+               "NPR" => "Nepalese Rupee"
+           ],
+           "fatoorah" => [
+               "KWD" => "Kuwaiti Dinar",
+               "SAR" => "Saudi Riyal"
+           ],
+           "flutterwave" => [
+               "NGN" => "Nigerian Naira",
+               "GHS" => "Ghanaian Cedi",
+               "KES" => "Kenyan Shilling",
+               "ZAR" => "South African Rand",
+               "USD" => "United States Dollar",
+               "EUR" => "Euro",
+               "GBP" => "Pound Sterling",
+               "XAF" => "Central African CFA Franc"
+           ],
+           "foloosi" => [
+               "AED" => "United Arab Emirates Dirham"
+           ],
+           "hubtel" => [
+               "GHS" => "Ghanaian Cedi"
+           ],
+           "hyper_pay" => [
+               "AED" => "United Arab Emirates Dirham",
+               "SAR" => "Saudi Riyal",
+               "EGP" => "Egyptian Pound",
+               "BHD" => "Bahraini Dinar",
+               "KWD" => "Kuwaiti Dinar",
+               "OMR" => "Omani Rial",
+               "QAR" => "Qatari Riyal",
+               "USD" => "United States Dollar"
+           ],
+           "instamojo" => [
+               "INR" => "Indian Rupee"
+           ],
+           "iyzi_pay" => [
+               "TRY" => "Turkish Lira"
+           ],
+           "liqpay" => [
+               "UAH" => "Ukrainian Hryvnia",
+               "USD" => "United States Dollar",
+               "EUR" => "Euro"
+           ],
+           "maxicash" => [
+               "PHP" => "Philippine Peso"
+           ],
+           "mercadopago" => [
+               "ARS" => "Argentine Peso",
+               "BRL" => "Brazilian Real",
+               "CLP" => "Chilean Peso",
+               "COP" => "Colombian Peso",
+               "MXN" => "Mexican Peso",
+               "PEN" => "Peruvian Sol",
+               "UYU" => "Uruguayan Peso",
+               "USD" => "United States Dollar"
+           ],
+           "momo" => [
+               "VND" => "Vietnamese Dong"
+           ],
+           "moncash" => [
+               "HTG" => "Haitian Gourde"
+           ],
+           "payfast" => [
+               "ZAR" => "South African Rand"
+           ],
+           "paymob_accept" => [
+               "EGP" => "Egyptian Pound"
+           ],
+           "paypal" => [
+               "AUD" => "Australian Dollar",
+               "BRL" => "Brazilian Real",
+               "CAD" => "Canadian Dollar",
+               "CZK" => "Czech Koruna",
+               "DKK" => "Danish Krone",
+               "EUR" => "Euro",
+               "HKD" => "Hong Kong Dollar",
+               "HUF" => "Hungarian Forint",
+               "INR" => "Indian Rupee",
+               "ILS" => "Israeli New Shekel",
+               "JPY" => "Japanese Yen",
+               "MYR" => "Malaysian Ringgit",
+               "MXN" => "Mexican Peso",
+               "TWD" => "New Taiwan Dollar",
+               "NZD" => "New Zealand Dollar",
+               "NOK" => "Norwegian Krone",
+               "PHP" => "Philippine Peso",
+               "PLN" => "Polish Zloty",
+               "GBP" => "Pound Sterling",
+               "RUB" => "Russian Ruble",
+               "SGD" => "Singapore Dollar",
+               "SEK" => "Swedish Krona",
+               "CHF" => "Swiss Franc",
+               "THB" => "Thai Baht",
+               "TRY" => "Turkish Lira",
+               "USD" => "United States Dollar"
+           ],
+           "paystack" => [
+               "NGN" => "Nigerian Naira",
+               "KES" => "Kenyan Shilling"
+           ],
+           "paytabs" => [
+               "AED" => "United Arab Emirates Dirham",
+               "SAR" => "Saudi Riyal",
+               "BHD" => "Bahraini Dinar",
+               "KWD" => "Kuwaiti Dinar",
+               "OMR" => "Omani Rial",
+               "QAR" => "Qatari Riyal",
+               "EGP" => "Egyptian Pound",
+               "USD" => "United States Dollar"
+           ],
+           "paytm" => [
+               "INR" => "Indian Rupee"
+           ],
+           "phonepe" => [
+               "INR" => "Indian Rupee"
+           ],
+           "pvit" => [
+               "NGN" => "Nigerian Naira"
+           ],
+           "razor_pay" => [
+               "INR" => "Indian Rupee"
+           ],
+           "senang_pay" => [
+               "MYR" => "Malaysian Ringgit"
+           ],
+           "sixcash" => [
+               "BDT" => "Bangladeshi Taka"
+           ],
+           "ssl_commerz" => [
+               "BDT" => "Bangladeshi Taka"
+           ],
+           "stripe" => [
+               "USD" => "United States Dollar",
+               "AUD" => "Australian Dollar",
+               "CAD" => "Canadian Dollar",
+               "EUR" => "Euro",
+               "GBP" => "Pound Sterling",
+               "JPY" => "Japanese Yen",
+               "NZD" => "New Zealand Dollar",
+               "CHF" => "Swiss Franc",
+               "DKK" => "Danish Krone",
+               "NOK" => "Norwegian Krone",
+               "SEK" => "Swedish Krona",
+               "SGD" => "Singapore Dollar",
+               "HKD" => "Hong Kong Dollar",
+               "MXN" => "Mexican Peso",
+           ],
+           "swish" => [
+               "SEK" => "Swedish Krona"
+           ],
+           "tap" => [
+               "AED" => "United Arab Emirates Dirham",
+               "SAR" => "Saudi Riyal",
+               "BHD" => "Bahraini Dinar",
+               "KWD" => "Kuwaiti Dinar",
+               "OMR" => "Omani Rial",
+               "QAR" => "Qatari Riyal"
+           ],
+           "thawani" => [
+               "OMR" => "Omani Rial"
+           ],
+           "viva_wallet" => [
+               "EUR" => "Euro"
+           ],
+           "worldpay" => [
+               "GBP" => "Pound Sterling",
+               "USD" => "United States Dollar",
+               "EUR" => "Euro",
+               "JPY" => "Japanese Yen"
+           ],
+           "xendit" => [
+               "IDR" => "Indonesian Rupiah",
+               "PHP" => "Philippine Peso",
+               "VND" => "Vietnamese Dong",
+               "THB" => "Thai Baht",
+               "MYR" => "Malaysian Ringgit",
+               "SGD" => "Singapore Dollar"
+           ],
+       ];
+
+       if ($key) {
+           return array_key_exists($key,$paymentGateway) ?  $paymentGateway[$key] : [];
+       }
+       return $paymentGateway;
+    }
+}
+
+if (!function_exists('getProviderSettings')) {
+    function getProviderSettings($providerId, $key, $type)
+    {
+        $cacheKey = "ps_{$providerId}_{$key}_{$type}";
+        $cached = \Illuminate\Support\Facades\Cache::get($cacheKey);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $setting = \Modules\ProviderManagement\Entities\ProviderSetting::where([
+            'key_name'      => $key,
+            'provider_id'   => $providerId,
+            'settings_type' => $type,
+        ])->first();
+
+        if ($setting) {
+            $decoded = json_decode($setting->live_values, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                \Illuminate\Support\Facades\Cache::put($cacheKey, $decoded, 3600);
+                return $decoded;
+            }
+        }
+
+        \Illuminate\Support\Facades\Cache::put($cacheKey, [], 3600);
+        return [];
+
+    }
+}
+
+if (!function_exists('checkActiveSMSGatewayCount')) {
+    function checkActiveSMSGatewayCount()
+    {
+        $dataValues = Setting::where('settings_type', 'sms_config')->get();
+        $count = 0;
+        foreach ($dataValues as $gateway) {
+            $status = $gateway?->live_values['status'] ?? 0;
+            if ($status == 1) {
+                $count = 1;
+            }
+        }
+
+        $firebaseOtpConfig = business_config('firebase_otp_verification', 'third_party');
+        $firebaseOtpStatus = (int)$firebaseOtpConfig?->live_values['status'] ?? null;
+
+        if ($firebaseOtpStatus == 1) {
+            $count = 1;
+        }
+
+         return (((login_setup('phone_verification'))->value ?? 0 ) == 1 && $count == 1 ? 1 : 0);
+
+    }
+}
+
+if (!function_exists('readableUploadMaxFileSize')) {
+    function readableUploadMaxFileSize($fileType)
+    {
+        $uploadMaxFileSize = uploadMaxFileSize($fileType);
+
+        return convertToReadableSize($uploadMaxFileSize);
+
+    }
+}
+
+if (!function_exists('uploadMaxFileSizeInKB')) {
+    function uploadMaxFileSizeInKB($fileType = 'image')
+    {
+        $uploadMaxFileSize = uploadMaxFileSize($fileType);
+        $uploadMaxFileSize = $uploadMaxFileSize / 1024;
+
+        return $uploadMaxFileSize;
+
+    }
+}
+
+if (!function_exists('convertToReadableSize')) {
+    function convertToReadableSize($bytes)
+    {
+        if ($bytes >= 1073741824) {
+            return round($bytes / 1073741824) . 'GB';
+        } elseif ($bytes >= 1048576) {
+            return round($bytes / 1048576) . 'MB';
+        } elseif ($bytes >= 1024) {
+            return round($bytes / 1024) . 'KB';
+        } else {
+            return $bytes . 'B';
+        }
+    }
+}
+
+if (!function_exists('uploadMaxFileSize')) {
+    function uploadMaxFileSize($fileType) {
+
+        $phpLimit = convertToBytes(ini_get('upload_max_filesize'));
+
+        if (env('APP_ENV') === 'demo') {
+            $appLimit = convertToBytes( '1M');
+        }else{
+            $appLimit = convertToBytes($fileType === 'image' ? '20M' : '50M');
+        }
+
+        return min($phpLimit, $appLimit);
+    }
+}
+
+if (!function_exists('convertToBytes')) {
+    function convertToBytes($value)
+    {
+        $value = trim($value);
+        $last = strtolower($value[strlen($value) - 1]);
+        $num = (int) $value;
+
+        switch ($last) {
+            case 'g':
+                $num *= 1024;
+            case 'm':
+                $num *= 1024;
+            case 'k':
+                $num *= 1024;
+        }
+
+        return $num;
+    }
+}
+
+
+if (!function_exists('getSetupGuideSteps')) {
+    function getSetupGuideSteps($panel = 'admin_panel', $user = null, $platform = 'web'): array
+    {
+        $steps = [];
+
+        if ($panel === 'admin_panel') {
+            $steps = [
+                'business_information' => [
+                    'key'   => 'business_information',
+                    'title' => 'setup_business_info',
+                    'route' => route('admin.business-settings.get-business-information', ['web_page' => 'business_setup']),
+                    'order' => 1,
+                ],
+                'business_plan' => [
+                    'key'   => 'business_plan',
+                    'title' => 'setup_business_plan',
+                    'route' => route('admin.business-settings.get-business-information', ['web_page' => 'business_plan']),
+                    'order' => 2,
+                ],
+                'google_map_configuration' => [
+                    'key'   => 'google_map_configuration',
+                    'title' => 'setup_google_map_configuration',
+                    'route' => route('admin.configuration.third-party', 'map-api'),
+                    'order' => 3,
+                ],
+                'email_configuration' => [
+                    'key'   => 'email_configuration',
+                    'title' => 'setup_email_configuration',
+                    'route' => route('admin.configuration.third-party', 'email-config'),
+                    'order' => 4,
+                ],
+                'notification_configuration' => [
+                    'key'   => 'notification_configuration',
+                    'title' => 'setup_notification_configuration',
+                    'route' => route('admin.configuration.third-party', 'firebase-configuration'),
+                    'order' => 5,
+                ],
+                'login_option' => [
+                    'key'   => 'login_option',
+                    'title' => 'explore_login_option',
+                    'route' => route('admin.business-settings.login.setup'),
+                    'order' => 6,
+                ],
+                'digital_payment' => [
+                    'key'   => 'digital_payment',
+                    'title' => 'explore_digital_payment',
+                    'route' => route('admin.configuration.third-party', ['webPage' => 'payment_config', 'type' => 'digital_payment']),
+                    'order' => 7,
+                ],
+            ];
+
+            // apply checked status
+            $options = $user ? getSetupGuidelineTutorialOptions(user: $user, platform:  $platform, userType:  'admin') : [];
+            foreach ($steps as $key => &$step) {
+                $step['checked'] = !empty($options[$key]) && (int)$options[$key] === 1;
+            }
+
+            // calculate completion percentage
+            $totalSteps = count($steps);
+            $completedSteps = collect($steps)->where('checked', true)->count();
+            $percentage = $totalSteps > 0 ? round(($completedSteps / $totalSteps) * 100) : 0;
+            $rotation = $percentage * 3.6; // 0–360
+
+            $isGuidelineDataExist = SettingsTutorials::where([
+                'user_id'  => auth()->id(),
+                'platform' => 'web',
+            ])->first();
+
+            $isFirstTimeGuide = is_null($isGuidelineDataExist);
+
+            return [
+                'steps' => $steps,
+                'percentage' => $percentage,
+                'rotation' => $rotation,
+                'isFirstTimeGuide' => $isFirstTimeGuide,
+            ];
+        }
+
+        if ($panel === 'provider_panel') {
+            $steps = [
+                'business_information' => [
+                    'key'   => 'business_information',
+                    'title' => 'setup_business_info',
+                    'route' => route('provider.business-settings.get-business-information', ['web_page' => 'businessinfos']),
+                    'order' => 1,
+                ],
+                'business_plan' => [
+                    'key'   => 'business_plan',
+                    'title' => 'explore_business_plan',
+                    'route' => route('provider.subscription-package.details'),
+                    'order' => 2,
+                ],
+                'subscribe_services' => [
+                    'key'   => 'subscribe_services',
+                    'title' => 'subscribe_a_services',
+                    'route' => route('provider.service.available'),
+                    'order' => 3,
+                ],
+                'payment_information' => [
+                    'key'   => 'payment_information',
+                    'title' => 'payment_information',
+                    'route' => route('provider.settings.payment-information.index'),
+                    'order' => 4,
+                ],
+                'service_availability' => [
+                    'key'   => 'service_availability',
+                    'title' => 'setup_service_availability',
+                    'route' => route('provider.business-settings.get-business-information', ['web_page' => 'service_availability']),
+                    'order' => 5,
+                ],
+            ];
+
+            // apply checked status
+            $options = $user ? getSetupGuidelineTutorialOptions(user: $user, platform: $platform, userType: 'provider' ) : [];
+            foreach ($steps as $key => &$step) {
+                $step['checked'] = !empty($options[$key]) && (int)$options[$key] === 1;
+            }
+
+            // calculate completion percentage
+            $totalSteps = count($steps);
+            $completedSteps = collect($steps)->where('checked', true)->count();
+            $percentage = $totalSteps > 0 ? round(($completedSteps / $totalSteps) * 100) : 0;
+            $rotation = $percentage * 3.6; // 0–360
+
+            $isGuidelineDataExist = SettingsTutorials::where([
+                'user_id'  => auth()->id(),
+                'platform' => 'web',
+            ])->first();
+
+            $isFirstTimeGuide = is_null($isGuidelineDataExist);
+
+            return [
+                'steps' => $steps,
+                'percentage' => $percentage,
+                'rotation' => $rotation,
+                'isFirstTimeGuide' => $isFirstTimeGuide,
+            ];
+        }
+
+        return [
+            'steps' => $steps,
+            'percentage' => 0,
+            'rotation' => 0,
+            'isFirstTimeGuide' => false,
+        ];
+    }
+}
+
+if (!function_exists('getSetupGuidelineTutorialOptions')) {
+    function getSetupGuidelineTutorialOptions($user, string $platform = 'web', $userType = 'admin'): array
+    {
+        if ($userType == 'admin'){
+            $defaults = [
+                'business_information'       => 0,
+                'business_plan'              => 0,
+                'google_map_configuration'   => 0,
+                'email_configuration'        => 0,
+                'notification_configuration' => 0,
+                'login_option'               => 0,
+                'digital_payment'            => 0,
+            ];
+        }else{
+            $defaults = [
+                'business_information' => 0,
+                'business_plan'        => 0,
+                'subscribe_services'   => 0,
+                'payment_information'  => 0,
+                'service_availability' => 0,
+            ];
+        }
+
+
+        if (!$user) {
+            return $defaults;
+        }
+
+        $tutorial = $user->getTutorialByPlatform($platform);
+
+        if ($tutorial && is_array($tutorial->options)) {
+            return array_replace($defaults, $tutorial->options);
+        }
+
+        return $defaults;
+    }
+}
+
+
+if (!function_exists('updateSetupGuidelineTutorialsOptions')) {
+    function updateSetupGuidelineTutorialsOptions($userId, $option, $platform = 'web'): void
+    {
+        $tutorial = SettingsTutorials::firstOrNew([
+            'user_id'  => $userId,
+            'platform' => $platform,
+        ]);
+
+        $options = is_array($tutorial->options) ? $tutorial->options : [];
+
+        if (isset($options[$option]) && $options[$option] == 1) {
+            return;
+        }
+
+        $options[$option] = 1;
+
+        $tutorial->options = $options;
+        $tutorial->save();
+    }
+}
+
+if (!function_exists('setupGuidelineRouteModify')) {
+    function setupGuidelineRouteModify(string $url): string
+    {
+        $parsed = parse_url($url);
+
+        // Existing query params
+        $query = [];
+        if (!empty($parsed['query'])) {
+            parse_str($parsed['query'], $query);
+        }
+
+        // Add / override from_guide
+        $query['from_guide'] = 1;
+
+        // Build base URL
+        $scheme = isset($parsed['scheme']) ? $parsed['scheme'] . '://' : '';
+        $host = $parsed['host'] ?? '';
+        $port = isset($parsed['port']) ? ':' . $parsed['port'] : '';
+        $path = $parsed['path'] ?? '';
+
+        return $scheme
+            . $host
+            . $port
+            . $path
+            . '?' . http_build_query($query);
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| AUTO-ASSIGN HELPERS
+|--------------------------------------------------------------------------
+| 1. calculateDistance()        - Haversine distance between two coordinates
+| 2. findNearestProviders()     - zone + sub_category ke nearest providers
+| 3. assignBookingToProvider()  - booking ko provider ko assign + timer start
+| 4. moveBookingToNextProvider()- current reject/expire hone par next provider
+| 5. autoAssignBooking()        - fresh booking ka auto-assign entry point
+| 6. processExpiredAutoAssign() - scheduled job se call hota hai
+*/
+
+if (!function_exists('calculateDistance')) {
+    /**
+     * Haversine formula — distance in KM
+     */
+    function calculateDistance($lat1, $lng1, $lat2, $lng2): float
+    {
+        $earthRadius = 6371; // km
+
+        $latDelta = deg2rad($lat2 - $lat1);
+        $lngDelta = deg2rad($lng2 - $lng1);
+
+        $a = sin($latDelta / 2) * sin($latDelta / 2)
+            + cos(deg2rad($lat1)) * cos(deg2rad($lat2))
+            * sin($lngDelta / 2) * sin($lngDelta / 2);
+
+        return $earthRadius * 2 * atan2(sqrt($a), sqrt(1 - $a));
+    }
+}
+
+if (!function_exists('getBookingCoordinates')) {
+    /**
+     * Booking ki address se lat/lng nikalo (service_address_location JSON me save hota hai)
+     */
+    function getBookingCoordinates($booking): array
+    {
+        $lat = $lng = null;
+        $address = is_string($booking->service_address_location)
+            ? json_decode($booking->service_address_location, true)
+            : $booking->service_address_location;
+
+        if (is_array($address)) {
+            $lat = $address['latitude'] ?? $address['lat'] ?? null;
+            $lng = $address['longitude'] ?? $address['lng'] ?? $address['lon'] ?? null;
+        }
+
+        return [$lat !== null ? (float)$lat : null, $lng !== null ? (float)$lng : null];
+    }
+}
+if (!function_exists('getProviderCoordinates')) {
+    function getProviderCoordinates($provider): array
+    {
+        $coordinates = $provider->coordinates;
+        if (is_string($coordinates)) {
+            $coordinates = json_decode($coordinates, true);
+        }
+
+        $lat = $coordinates['latitude'] ?? $coordinates['lat'] ?? null;
+        $lng = $coordinates['longitude'] ?? $coordinates['lng'] ?? null;
+
+        return [$lat !== null ? (float)$lat : null, $lng !== null ? (float)$lng : null];
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| SERVICEABILITY (customer visibility + booking gate) — SINGLE SOURCE
+|--------------------------------------------------------------------------
+| Rules:
+|  1. Status/eligibility logic EXISTING scopes se reuse hoti hai
+|     (SubscribedService::ofStatus, Provider::ofStatus/ofApproval, nextBookingEligibility)
+|     — yahan koi duplicate status logic nahi.
+|  2. Subcategory assignment ki PRIORITY > category assignment.
+|     Category-level fallback sirf tab jab subcategory ka koi assignment hi na ho
+|     (category fallback = assign_type 'complete' i.e. admin ne pura main category diya).
+|  3. Ye DONO sirf customer visibility aur final booking gate me use hoti hain.
+|     Serviceman radius/assignment pe koi asar nahi.
+*/
+
+if (!function_exists('apply_business_timezone')) {
+    /**
+     * Business timezone ko har process me apply karo.
+     *
+     * Pehle ye sirf BusinessSettingsModuleServiceProvider::boot() me hota tha,
+     * jo cache/db par depend karta hai. Long-running process (queue:work,
+     * schedule:work) agar DB/cache ready hone se pehle boot ho jaye to poora
+     * process life UTC me reh jata tha. Result: app IST me `now()` likhta,
+     * worker UTC se compare karta -> auto-assign/decision countdown kabhi
+     * expire hi nahi hota (booking pending me atak jati hai), daily schedules
+     * galat time par chalte.
+     *
+     * Isliye: har job se pehle / boot par dobara apply karte hain, aur
+     * cached value na mile to DB se seedha padhte hain.
+     */
+    function apply_business_timezone(): void
+    {
+        try {
+            $timezone = null;
+
+            $cached = \Illuminate\Support\Facades\Cache::get('bc_business_information_time_zone');
+            if (is_object($cached)) {
+                $timezone = $cached->live_values ?? null;
+            }
+
+            if (empty($timezone)) {
+                $row = \Modules\BusinessSettingsModule\Entities\BusinessSettings::query()
+                    ->where('key_name', 'time_zone')
+                    ->where('settings_type', 'business_information')
+                    ->first();
+
+                if ($row) {
+                    $timezone = $row->live_values;
+                    \Illuminate\Support\Facades\Cache::put('bc_business_information_time_zone', $row, 3600);
+                }
+            }
+
+            if (!empty($timezone) && $timezone !== date_default_timezone_get()
+                && in_array($timezone, timezone_identifiers_list(), true)) {
+                \Illuminate\Support\Facades\Config::set('app.timezone', $timezone);
+                \Illuminate\Support\Facades\Config::set('timezone', $timezone);
+                date_default_timezone_set($timezone);
+            }
+        } catch (\Throwable $e) {
+            // DB/cache unavailable — default timezone hi rahe, request fail na ho.
+        }
+    }
+}
+
+if (!function_exists('reprice_cart_for_zone')) {
+    /**
+     * Cart rows ko diye gaye zone ke price par sync karo.
+     *
+     * Kyun zaroori: app ka zone header stale ho sakta hai (user ne address
+     * badla) aur cart purane zone ke price par bana ho. Booking/payment se
+     * pehle current (address-based) zone ke price lagne chahiye — warna
+     * customer galat amount pay karta tha.
+     *
+     * @return array|null  failure payload, ya null jab sab theek ho
+     */
+    function reprice_cart_for_zone($cartRows, ?string $zoneId): ?array
+    {
+        if (empty($zoneId) || empty($cartRows) || $cartRows->isEmpty()) {
+            return null;
+        }
+
+        // Neeche discount relations zone-scoped hain — config zone bhi set karo.
+        \Illuminate\Support\Facades\Config::set('zone_id', $zoneId);
+
+        foreach ($cartRows as $row) {
+            // Current zone ka price pehle, nahi mile to "All over the World"
+            // (catch-all) zone ka default price. Doosri city zone ka price
+            // kabhi use nahi hota.
+            $variation = variation_for_zone($row->service_id, $row->variant_key, $zoneId);
+
+            if (!$variation) {
+                return [
+                    'flag' => 'failed',
+                    'message' => translate('Service is not available in your area right now'),
+                ];
+            }
+
+            if ((float) $row->service_cost === (float) $variation->price) {
+                continue;
+            }
+
+            $service = \Modules\ServiceManagement\Entities\Service::with([
+                'service_discount', 'campaign_discount', 'category.category_discount',
+            ])->find($row->service_id);
+
+            if (!$service) {
+                continue;
+            }
+
+            $quantity = max(1, (int) $row->quantity);
+            $subtotal = round((float) $variation->price * $quantity, 2);
+            $provider = $row->provider_id
+                ? \Modules\ProviderManagement\Entities\Provider::find($row->provider_id)
+                : null;
+
+            $basicDiscount = basic_discount_calculation($service, $subtotal, $row->provider_id);
+            $campaignDiscount = campaign_discount_calculation($service, $subtotal);
+            $applicableDiscount = ($campaignDiscount >= $basicDiscount) ? $campaignDiscount : $basicDiscount;
+
+            $effectiveTaxPercent = providerEffectiveTaxPercent($provider, (float) ($service->tax ?? 0));
+            $tax = round((($subtotal - $applicableDiscount) * $effectiveTaxPercent) / 100, 2);
+
+            $basicDiscount = $basicDiscount > $campaignDiscount ? $basicDiscount : 0;
+            $campaignDiscount = $campaignDiscount >= $basicDiscount ? $campaignDiscount : 0;
+
+            $row->service_cost = $variation->price;
+            $row->discount_amount = $basicDiscount;
+            $row->campaign_discount = $campaignDiscount;
+            $row->tax_amount = $tax;
+            $row->total_cost = round($subtotal - $basicDiscount - $campaignDiscount + $tax, 2);
+            $row->save();
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('global_zone_id')) {
+    /**
+     * Catch-all zone ("All over the World") ka id.
+     *
+     * Sabse bada area wala active zone hi global/default zone hota hai. City
+     * zones chhote polygons hote hain, isliye largest-area rule rename ya
+     * translation ke bawajood sahi zone pakadta hai.
+     */
+    function global_zone_id(): ?string
+    {
+        static $resolved = false;
+
+        if ($resolved !== false) {
+            return $resolved;
+        }
+
+        try {
+            $resolved = \Illuminate\Support\Facades\Cache::remember('global_zone_id', 300, function () {
+                return \Modules\ZoneManagement\Entities\Zone::withoutGlobalScopes()
+                    ->where('is_active', 1)
+                    ->whereNotNull('coordinates')
+                    ->orderByRaw('ST_Area(coordinates) DESC')
+                    ->value('id');
+            });
+        } catch (\Throwable $e) {
+            $resolved = null;
+        }
+
+        return $resolved;
+    }
+}
+
+if (!function_exists('effective_zone_variations')) {
+    /**
+     * Customer ke liye effective variation rows:
+     *   1. Current zone ke priced variants (priority)
+     *   2. Jo variant current zone me nahi hai, wo global zone ke price se
+     *      fill hota hai (sirf "All over the World" se — kisi doosri city se nahi).
+     *
+     * Isse naya city zone bante hi har service ka price dobara set karne ki
+     * zaroorat nahi padti, aur galat city ka price leak bhi nahi hota.
+     */
+    function effective_zone_variations($service, ?string $zoneId = null): \Illuminate\Support\Collection
+    {
+        $zoneId = $zoneId ?: \Illuminate\Support\Facades\Config::get('zone_id');
+        $loaded = $service->relationLoaded('variations') ? $service->variations : null;
+
+        if (empty($zoneId)) {
+            return $loaded
+                ? $loaded->where('price', '>', 0)->values()
+                : $service->variations()->where('price', '>', 0)->get();
+        }
+
+        $current = $loaded
+            ? $loaded->where('zone_id', $zoneId)->where('price', '>', 0)->values()
+            : \Modules\ServiceManagement\Entities\Variation::withoutGlobalScopes()
+                ->where('service_id', $service->id)
+                ->where('zone_id', $zoneId)
+                ->where('price', '>', 0)
+                ->get();
+
+        $globalZoneId = global_zone_id();
+        if (!empty($globalZoneId) && $globalZoneId !== $zoneId) {
+            $globalRows = \Modules\ServiceManagement\Entities\Variation::withoutGlobalScopes()
+                ->where('service_id', $service->id)
+                ->where('zone_id', $globalZoneId)
+                ->where('price', '>', 0)
+                ->get();
+
+            if ($globalRows->isNotEmpty()) {
+                $merged = $current->keyBy('variant_key');
+                foreach ($globalRows as $globalRow) {
+                    if (!$merged->has($globalRow->variant_key)) {
+                        $merged->put($globalRow->variant_key, $globalRow);
+                    }
+                }
+                $current = $merged->values();
+            }
+        }
+
+        return $current;
+    }
+}
+
+if (!function_exists('variation_for_zone')) {
+    /**
+     * Ek variant ka effective price row: current zone first, phir global zone.
+     * Cart add, reorder, reprice aur booking-recheck sab isi se resolve karte
+     * hain taaki display price aur charged price hamesha same rahe.
+     */
+    function variation_for_zone(string $serviceId, string $variantKey, ?string $zoneId = null)
+    {
+        $zoneId = $zoneId ?: \Illuminate\Support\Facades\Config::get('zone_id');
+        if (empty($zoneId)) {
+            return null;
+        }
+
+        $base = \Modules\ServiceManagement\Entities\Variation::withoutGlobalScopes()
+            ->where('service_id', $serviceId)
+            ->where('variant_key', $variantKey)
+            ->where('price', '>', 0);
+
+        $variation = (clone $base)->where('zone_id', $zoneId)->first();
+        if ($variation) {
+            return $variation;
+        }
+
+        $globalZoneId = global_zone_id();
+        if (!empty($globalZoneId) && $globalZoneId !== $zoneId) {
+            return (clone $base)->where('zone_id', $globalZoneId)->first();
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('is_customer_api_request')) {
+    /**
+     * Customer app ke dono API namespaces: legacy `customer` aur current `client`.
+     * Global scopes (zone filter) dono par lagne chahiye — sirf `customer` check
+     * karne se `client` routes par zone filtering hi nahi hoti thi, jisse
+     * variations/categories/coupons sab zones ke mix ho jaate the.
+     */
+    function is_customer_api_request(): bool
+    {
+        return request()->is('api/*/client*') || request()->is('api/*/customer*');
+    }
+}
+
+if (!function_exists('zone_id_from_coordinates')) {
+    /**
+     * Coordinates se zone resolve karo. Overlapping polygons (jaise
+     * "All over the World" + city zone) me SABSE CHHOTA polygon jeetta hai,
+     * kyunki wahi sabse specific zone hai. Pehle `latest()` / `first()`
+     * use hota tha, isliye zone creation date ke hisaab se badal jata tha —
+     * same location kabhi city zone, kabhi global zone.
+     */
+    function zone_id_from_coordinates(?float $lat, ?float $lng): ?string
+    {
+        if ($lat === null || $lng === null) {
+            return null;
+        }
+        if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) {
+            return null;
+        }
+
+        static $cache = [];
+        $key = round($lat, 6) . ',' . round($lng, 6);
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
+        }
+
+        $zoneId = \Modules\ZoneManagement\Entities\Zone::query()
+            ->ofStatus(1)
+            ->whereRaw('ST_Contains(coordinates, POINT(?, ?))', [$lng, $lat])
+            ->orderByRaw('ST_Area(coordinates) ASC')
+            ->value('id');
+
+        return $cache[$key] = $zoneId ? (string) $zoneId : null;
+    }
+}
+
+if (!function_exists('search_geo_context')) {
+    /**
+     * Current request ka geo search context (customer ki location + effective radius).
+     * Returns ['lat'=>float, 'lng'=>float, 'radius'=>float] ya null jab tak lat/lng na ho.
+     * Radius: explicit `radius` input > zone ka provider_search_radius > default 5.
+     * (Koi static cache nahi — config per request hota hai, zone lookup PK query hai.)
+     */
+    function search_geo_context(): ?array
+    {
+        $lat = config('search_lat');
+        $lng = config('search_lng');
+        if ($lat === null || $lng === null) {
+            return null;
+        }
+
+        $radius = config('search_radius');
+        if (empty($radius)) {
+            $zoneId = config('zone_id');
+            if (!empty($zoneId)) {
+                $zone = \Modules\ZoneManagement\Entities\Zone::query()->find($zoneId);
+                $radius = $zone?->provider_search_radius;
+            }
+        }
+        if (empty($radius)) {
+            $radius = 5;
+        }
+
+        return ['lat' => (float) $lat, 'lng' => (float) $lng, 'radius' => (float) $radius];
+    }
+}
+
+if (!function_exists('radius_provider_ids')) {
+    /**
+     * Radius (km) ke andar ke provider ids, customer location se:
+     *  (a) provider ki khud ki location (providers.coordinates), ya
+     *  (b) uske kisi ACTIVE serviceman ki live location (users.current_lat/lng).
+     * Sirf un providers ko return karta hai jo diye gaye $zoneId se belong karte hain.
+     * Per-request cache. Serviceman assignment/booking radius ko ye touch nahi karta.
+     *
+     * @param string|null $zoneId Sirf is zone ke providers return karega
+     * @return array<int, string> provider ids (UUID strings)
+     */
+    function radius_provider_ids(float $lat, float $lng, float $radius, ?string $zoneId = null): array
+    {
+        static $cache = [];
+        $key = round($lat, 5) . '|' . round($lng, 5) . '|' . round($radius, 2) . '|' . ($zoneId ?? 'null');
+        if (isset($cache[$key])) {
+            return $cache[$key];
+        }
+
+        $within = function (?float $targetLat, ?float $targetLng) use ($lat, $lng, $radius): bool {
+            if ($targetLat === null || $targetLng === null) {
+                return false;
+            }
+            return calculateDistance($lat, $lng, $targetLat, $targetLng) <= $radius;
+        };
+
+        $ids = [];
+
+        // (a) Providers apni coordinates par — sirf same zone ke providers
+        $providerQuery = \Modules\ProviderManagement\Entities\Provider::query()->get(['id', 'zone_id', 'coordinates']);
+        foreach ($providerQuery as $provider) {
+            // Zone filter: agar zoneId set hai toh sirf us zone ke providers
+            if ($zoneId && $provider->zone_id !== $zoneId) {
+                continue;
+            }
+            [$providerLat, $providerLng] = getProviderCoordinates($provider);
+            if ($within($providerLat, $providerLng)) {
+                $ids[] = (string) $provider->id;
+            }
+        }
+
+        // (b) Servicemen ki live location (servicemen table me status column nahi —
+        //     user active aur location set honi chahiye)
+        // Sirf un servicemen ko check karo jo same zone ke provider ke hain
+        // aur jo 5 minute ke andar location update kar chuke hain (stale location skip kare)
+        $freshCutoff = now()->subMinutes(5);
+        $servicemanQuery = \Modules\UserManagement\Entities\Serviceman::query()
+            ->whereHas('user', function ($userQuery) use ($freshCutoff) {
+                $userQuery->where('is_active', 1)
+                    ->whereNotNull('current_lat')
+                    ->whereNotNull('current_lng')
+                    ->where('last_location_updated_at', '>', $freshCutoff);
+            })
+            ->whereHas('provider', function ($providerQuery) use ($zoneId) {
+                if ($zoneId) {
+                    $providerQuery->where('zone_id', $zoneId);
+                }
+            })
+            ->with('user:id,current_lat,current_lng,last_location_updated_at')
+            ->get(['id', 'provider_id', 'user_id']);
+
+        foreach ($servicemanQuery as $serviceman) {
+            $user = $serviceman->user;
+            if (!$user || empty($serviceman->provider_id)) {
+                continue;
+            }
+            $userLat = is_numeric($user->current_lat) ? (float) $user->current_lat : null;
+            $userLng = is_numeric($user->current_lng) ? (float) $user->current_lng : null;
+            if ($within($userLat, $userLng)) {
+                $ids[] = (string) $serviceman->provider_id;
+            }
+        }
+
+        return $cache[$key] = array_values(array_unique($ids));
+    }
+}
+
+if (!function_exists('subscribed_assignment_query')) {
+    /**
+     * subscribed_services ke upar zone-scoped serviceability constraint.
+     * Row eligible tab hai jab uska provider serviceable ho:
+     *  - status: active + approved + non-suspended (SubscribedService::ofStatus)
+     *  - location: provider usi zone ka ho (zone hi booking ki eligibility base hai).
+     *
+     * NOTE: distance/radius yahan gate nahi hai. Ek zone ke andar provider door ho
+     * sakta hai, par assigned hote hi wo us zone ki bookings serve karta hai —
+     * radius sirf "nearest" chunne ke liye use hota hai (findNearestProviders).
+     *
+     * @param string|null $zoneId
+     * @return \Closure
+     */
+    function subscribed_assignment_query(?string $zoneId): \Closure
+    {
+        return function ($query) use ($zoneId) {
+            $query->ofStatus(1)
+                ->whereHas('provider', function ($provider) use ($zoneId) {
+                    $provider->ofStatus(1)
+                        ->ofApproval(1)
+                        ->where('is_suspended', 0);
+
+                    if (!empty($zoneId)) {
+                        $provider->where('zone_id', $zoneId);
+                    }
+                });
+        };
+    }
+}
+
+if (!function_exists('subcategory_has_serviceable_provider')) {
+    /**
+     * Zone me is sub-category (ya category) ke liye serviceable provider hai ya nahi.
+     * Priority: subcategory assignment → fallback: category assignment (complete).
+     *
+     * @param string|null $subCategoryId
+     * @param string|null $categoryId
+     * @param string      $zoneId
+     * @param string|null $providerId  optional — sirf ye specific provider check karo
+     */
+    function subcategory_has_serviceable_provider(?string $subCategoryId, ?string $categoryId, string $zoneId, ?string $providerId = null): bool
+    {
+        $eligible = subscribed_assignment_query($zoneId);
+
+        // 1) Priority: subcategory-level assignment
+        if (!empty($subCategoryId)) {
+            $subQuery = \Modules\ProviderManagement\Entities\SubscribedService::query()
+                ->where('sub_category_id', $subCategoryId);
+            $eligible($subQuery);
+            if (!empty($providerId)) {
+                $subQuery->where('provider_id', $providerId);
+            }
+            if ($subQuery->exists()) {
+                return true;
+            }
+
+            // Subcategory ka assignment maujood hai (kisi bhi zone me) par eligible nahi
+            // → fallback nahi (sub-assignment exists hi nahi tabhi fallback milega).
+            $subAssignmentExists = \Modules\ProviderManagement\Entities\SubscribedService::query()
+                ->where('sub_category_id', $subCategoryId)
+                ->ofStatus(1)
+                ->exists();
+            if ($subAssignmentExists) {
+                return false;
+            }
+        }
+
+        // 2) Fallback: category-level assignment (admin ne complete main category assign ki)
+        if (empty($categoryId)) {
+            return false;
+        }
+
+        $categoryQuery = \Modules\ProviderManagement\Entities\SubscribedService::query()
+            ->where('category_id', $categoryId)
+            ->where('assign_type', 'complete');
+        $eligible($categoryQuery);
+        if (!empty($providerId)) {
+            $categoryQuery->where('provider_id', $providerId);
+        }
+
+        return $categoryQuery->exists();
+    }
+}
+
+if (!function_exists('is_booking_serviceable')) {
+    /**
+     * FINAL server-side serviceability gate — booking create se pehle mandatory.
+     * UI/API visibility par trust nahi kiya jata; yahan wahi assignment rules chalte hain:
+     *  - Chosen provider: provider zone+status+assignment (priority rules) + nextBookingEligibility
+     *  - Auto-assign path: EXISTING findNearestProviders() — system sach me assign kar payega?
+     *
+     * @param string|null $subCategoryId
+     * @param string|null $categoryId
+     * @param string|null $zoneId
+     * @param string|null $providerId
+     * @param float|null  $bookingLat
+     * @param float|null  $bookingLng
+     */
+    function is_booking_serviceable(?string $subCategoryId, ?string $categoryId, ?string $zoneId, ?string $providerId = null, ?float $bookingLat = null, ?float $bookingLng = null): bool
+    {
+        if (empty($zoneId)) {
+            return false;
+        }
+
+        if (!empty($providerId)) {
+            $provider = \Modules\ProviderManagement\Entities\Provider::query()
+                ->ofStatus(1)
+                ->ofApproval(1)
+                ->where('is_suspended', 0)
+                ->find($providerId);
+
+            if (!$provider) {
+                return false;
+            }
+
+            if ((string) $provider->zone_id === (string) $zoneId) {
+                // Same zone: zone hi eligibility base hai (radius sirf "nearest" ke liye).
+                if (!subcategory_has_serviceable_provider($subCategoryId, $categoryId, $zoneId, $provider->id)) {
+                    return false;
+                }
+            } else {
+                // Cross-zone provider: admin ne cross-zone allow kiya ho aur provider
+                // ke apne zone me is sub-category ki active assignment ho.
+                $crossZoneEnabled = (int) (business_config('cross_zone_fallback_enabled', 'booking_setup')?->live_values ?? 1) === 1;
+                if (!$crossZoneEnabled) {
+                    return false;
+                }
+
+                $hasAssignment = \Modules\ProviderManagement\Entities\SubscribedService::query()
+                    ->where('provider_id', $provider->id)
+                    ->where('zone_id', $provider->zone_id)
+                    ->where('is_subscribed', 1)
+                    ->where(function ($query) use ($subCategoryId, $categoryId) {
+                        $query->where('sub_category_id', $subCategoryId);
+                        if (!empty($categoryId)) {
+                            $query->orWhere(function ($q) use ($categoryId) {
+                                $q->where('category_id', $categoryId)->where('assign_type', 'complete');
+                            });
+                        }
+                    })
+                    ->exists();
+
+                if (!$hasAssignment) {
+                    return false;
+                }
+
+                if ($bookingLat !== null && $bookingLng !== null) {
+                    [$providerLat, $providerLng] = getProviderCoordinates($provider);
+                    $distanceLimit = (int) (business_config('cross_zone_distance_limit', 'booking_setup')?->live_values ?? 50) ?: 50;
+                    if ($providerLat === null || $providerLng === null) {
+                        return false;
+                    }
+                    if (calculateDistance($bookingLat, $bookingLng, $providerLat, $providerLng) > $distanceLimit) {
+                        return false;
+                    }
+                }
+            }
+
+            try {
+                return nextBookingEligibility($provider->id, $provider);
+            } catch (\Throwable $e) {
+                return true;
+            }
+        }
+
+        // Auto-assign path: jo provider system actually assign karega wahi allowed hai
+        return findNearestProviders($zoneId, $subCategoryId, [], 20, $bookingLat, $bookingLng)->isNotEmpty();
+    }
+}
+
+if (!function_exists('findNearestProviders')) {
+    /**
+     * Zone + sub-category ke eligible providers ko distance ke hisab se sort karke return karo
+     * NEW LOGIC: Sirf EK provider per zone per sub_category (admin ne assign kiya hoga)
+     * CATEGORY ASSIGNMENT MODES:
+     * - Complete Main Category: Provider gets all sub-categories of a main category (zone + category unique)
+     * - Sub-Category Only: Provider gets specific sub-categories (zone + sub_category unique)
+     * CROSS-ZONE FALLBACK: Agar zone me provider nahi hai aur admin toggle ON hai,
+     *                    to nearest zone ke provider ko assign karo (distance limit ke andar)
+     * Eligibility: active/approved/not-suspended/availability + subscribed service +
+     *              package & payment limits (nextBookingEligibility) + location set
+     */
+    function findNearestProviders($zoneId, $subCategoryId, array $excludeProviderIds = [], int $limit = 20, ?float $bookingLat = null, ?float $bookingLng = null)
+    {
+        // First check: Zone + Sub Category ke liye assigned provider (single provider per zone per category)
+        $assignedProvider = Provider::query()
+            ->where('zone_id', $zoneId)
+            ->where('is_active', 1)
+            ->where('is_approved', 1)
+            ->where('is_suspended', 0)
+            ->where('service_availability', 1)
+            // NOTE: provider relation `subscribed_services` request ke zone
+            // (config('zone_id')) se scoped hai. Booking ka zone usse alag ho sakta
+            // hai (address se resolve hua), isliye seedha subscribed_services par
+            // exists-check karte hain — warna valid provider silently skip ho jata tha.
+            ->whereExists(function ($query) use ($zoneId, $subCategoryId) {
+                $query->selectRaw('1')
+                    ->from('subscribed_services')
+                    ->whereColumn('subscribed_services.provider_id', 'providers.id')
+                    ->where('subscribed_services.zone_id', $zoneId)
+                    ->where('subscribed_services.sub_category_id', $subCategoryId)
+                    ->where('subscribed_services.is_subscribed', 1);
+            })
+            ->when(count($excludeProviderIds) > 0, function ($query) use ($excludeProviderIds) {
+                $query->whereNotIn('id', $excludeProviderIds);
+            })
+            ->with('owner:id,fcm_token,current_language_key')
+            ->first();
+
+        if ($assignedProvider) {
+            // Exact zone/category match hi use karo. Is fast path ko provider
+            // plan/capacity/location checks bypass nahi karne chahiye.
+            try {
+                if (!nextBookingEligibility($assignedProvider->id, $assignedProvider)) {
+                    return collect();
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Provider eligibility check failed for exact zone/category match', [
+                    'provider_id' => $assignedProvider->id,
+                    'zone_id' => $zoneId,
+                ]);
+                return collect();
+            }
+
+            [$providerLat, $providerLng] = getProviderCoordinates($assignedProvider);
+            if ($providerLat === null || $providerLng === null) {
+                return collect();
+            }
+            $assignedProvider->distance_km = ($bookingLat !== null && $bookingLng !== null)
+                ? calculateDistance($bookingLat, $bookingLng, $providerLat, $providerLng)
+                : null;
+            return collect([$assignedProvider]);
+        }
+
+        // Fallback: Agar assigned provider nahi hai to nearest eligible providers (backward compatibility)
+        $providers = Provider::query()
+            ->where('zone_id', $zoneId)
+            ->where('is_active', 1)
+            ->where('is_approved', 1)
+            ->where('is_suspended', 0)
+            ->where('service_availability', 1)
+            ->whereExists(function ($query) use ($zoneId, $subCategoryId) {
+                $query->selectRaw('1')
+                    ->from('subscribed_services')
+                    ->whereColumn('subscribed_services.provider_id', 'providers.id')
+                    ->where('subscribed_services.zone_id', $zoneId)
+                    ->where('subscribed_services.sub_category_id', $subCategoryId)
+                    ->where('subscribed_services.is_subscribed', 1);
+            })
+            ->when(count($excludeProviderIds) > 0, function ($query) use ($excludeProviderIds) {
+                $query->whereNotIn('id', $excludeProviderIds);
+            })
+            ->with('owner:id,fcm_token,current_language_key')
+            ->get();
+
+        if ($providers->isEmpty()) {
+            // CROSS-ZONE FALLBACK: Agar zone me provider nahi hai aur admin toggle ON hai
+                $crossZoneEnabled = (int) (business_config('cross_zone_fallback_enabled', 'booking_setup')?->live_values ?? 1) === 1;
+
+            if ($crossZoneEnabled && $bookingLat !== null && $bookingLng !== null) {
+                $distanceLimit = (int) (business_config('cross_zone_distance_limit', 'booking_setup')?->live_values ?? 50) ?: 50;
+                
+                // Cross-zone fallback: ANY zone ke providers dhundo (current zone se alag)
+                // taaki agar current zone me koi provider nahi hai toh paas ke zone se mil sake
+                $crossZoneProviders = Provider::query()
+                    ->where('zone_id', '!=', $zoneId)  // Cross-zone: current zone ke alawa dusre zones
+                    ->where('is_active', 1)
+                    ->where('is_approved', 1)
+                    ->where('is_suspended', 0)
+                    ->where('service_availability', 1)
+                    ->whereExists(function ($query) use ($subCategoryId) {
+                        $query->selectRaw('1')
+                            ->from('subscribed_services')
+                            ->whereColumn('subscribed_services.provider_id', 'providers.id')
+                            // Assignment provider ke apne (current) zone me honi chahiye
+                            ->whereColumn('subscribed_services.zone_id', 'providers.zone_id')
+                            ->where('subscribed_services.sub_category_id', $subCategoryId)
+                            ->where('subscribed_services.is_subscribed', 1);
+                    })
+                    ->when(count($excludeProviderIds) > 0, function ($query) use ($excludeProviderIds) {
+                        $query->whereNotIn('id', $excludeProviderIds);
+                    })
+                    ->with('owner:id,fcm_token,current_language_key')
+                    ->get();
+
+                if (!$crossZoneProviders->isEmpty()) {
+                    // Distance calculate karo aur filter karo (distance limit ke andar)
+                    $crossZoneProviders = $crossZoneProviders
+                        ->filter(function ($provider) {
+                            [$lat, $lng] = getProviderCoordinates($provider);
+                            return $lat !== null && $lng !== null;
+                        })
+                        ->map(function ($provider) use ($bookingLat, $bookingLng) {
+                            [$providerLat, $providerLng] = getProviderCoordinates($provider);
+                            $provider->distance_km = calculateDistance($bookingLat, $bookingLng, $providerLat, $providerLng);
+                            return $provider;
+                        })
+                        ->filter(function ($provider) use ($distanceLimit) {
+                            return $provider->distance_km !== null && $provider->distance_km <= $distanceLimit;
+                        })
+                        ->sortBy(function ($provider) {
+                            return $provider->distance_km ?? PHP_FLOAT_MAX;
+                        })
+                        ->filter(function ($provider) {
+                            try {
+                                return nextBookingEligibility($provider->id, $provider);
+                            } catch (\Throwable $e) {
+                                return true;
+                            }
+                        })
+                        ->values();
+
+                    if (!$crossZoneProviders->isEmpty()) {
+                        return $crossZoneProviders;
+                    }
+                }
+            }
+            
+            return collect();
+        }
+
+        // expired/limit-exhausted plan wale provider ko booking do nahi
+        // (warna booking unke pending list me aayegi hi nahi — stuck ho jayegi)
+        $providers = $providers->filter(function ($provider) {
+            try {
+                return nextBookingEligibility($provider->id, $provider);
+            } catch (\Throwable $e) {
+                return true;
+            }
+        });
+
+        if ($providers->isEmpty()) {
+            return collect();
+        }
+
+        // booking coordinates nahi mile toh distance sort skip karo (sabhi eligible providers return karo)
+        return $providers
+            ->filter(function ($provider) {
+                // provider jiske paas location set hi nahi hai wo list me nahi aayega
+                [$lat, $lng] = getProviderCoordinates($provider);
+                return $lat !== null && $lng !== null;
+            })
+            ->map(function ($provider) use ($bookingLat, $bookingLng) {
+                [$providerLat, $providerLng] = getProviderCoordinates($provider);
+                $provider->distance_km = ($bookingLat !== null && $bookingLng !== null)
+                    ? calculateDistance($bookingLat, $bookingLng, $providerLat, $providerLng)
+                    : null;
+                return $provider;
+            })
+            ->sortBy(function ($provider) {
+                return $provider->distance_km ?? PHP_FLOAT_MAX;
+            })
+            ->values();
+    }
+}
+
+if (!function_exists('autoAssignBooking')) {
+    /**
+     * Naye booking ka auto-assign entry point:
+     *  1. zone ka provider dhundo (spec: ek zone = ek provider; multiple mile to nearest)
+     *     - single-provider exclusive lock ho to sirf wahi
+     *  2. booking ko us provider par lock karo (pending list me dikhega)
+     *  3. provider ke toggle ke hisab se:
+     *     - ON  -> provider decision window (push + screen, serviceman WAIT karega)
+     *     - OFF -> nearest serviceman ko seedha request (silent)
+     */
+    function autoAssignBooking($booking): void
+    {
+        try {
+            $excludeProviderIds = getIgnoredProviderIds($booking);
+            $provider = null;
+
+            // Single-provider exclusive service: sirf locked provider ko hi assign karo
+            $lockedProviderId = getBookingSingleProviderLockId($booking);
+            if ($lockedProviderId) {
+                $provider = Provider::where('id', $lockedProviderId)
+                    ->where('zone_id', $booking->zone_id)
+                    ->where('is_active', 1)
+                    ->where('is_approved', 1)
+                    ->where('is_suspended', 0)
+                    ->where('service_availability', 1)
+                    ->whereDoesntHave('ignoredBookings', function ($query) use ($booking) {
+                        $query->where('booking_id', $booking->id);
+                    })
+                    ->with('owner:id,fcm_token,current_language_key')
+                    ->first();
+
+                // Locked provider available nahi -> booking pending (kisi aur ko nahi dena)
+                if (!$provider) {
+                    return;
+                }
+            } else {
+                // Zone ke eligible providers (ek zone = ek provider; fallback = nearest)
+                [$bookingLat, $bookingLng] = getBookingCoordinates($booking);
+                $providers = findNearestProviders($booking->zone_id, $booking->sub_category_id, $excludeProviderIds, 20, $bookingLat, $bookingLng);
+
+                if ($providers->isEmpty()) {
+                    return; // koi eligible provider nahi -> booking pending
+                }
+                $provider = $providers->first();
+            }
+
+            // Booking ko zone ke is provider par lock karo
+            $booking->provider_id = $provider->id;
+            $booking->auto_assigned = 0;
+            $booking->auto_assign_expires_at = null;
+            $booking->save();
+
+            startWithinProviderAssignment($booking);
+        } catch (\Throwable $e) {
+            Log::error('autoAssignBooking failed: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('direct_assign_serviceman')) {
+    /**
+     * Admin/provider ne specific serviceman choose kiya -> DIRECT assignment.
+     * Koi accept/countdown request nahi: booking accepted ho jati hai,
+     * sirf normal notification jaati hai.
+     */
+    function direct_assign_serviceman($booking, string $servicemanId, ?string $changedBy = null): bool
+    {
+        if (!$booking || !$servicemanId) {
+            return false;
+        }
+
+        $serviceman = Serviceman::with('user:id,fcm_token')->find($servicemanId);
+        if (!$serviceman) {
+            return false;
+        }
+
+        $isRepeat = $booking instanceof BookingRepeat;
+        $mainBooking = $isRepeat ? $booking->booking : $booking;
+        if (!$mainBooking) {
+            return false;
+        }
+
+        $wasPending = $booking->booking_status === 'pending';
+
+        if ($isRepeat) {
+            $booking->serviceman_id = $servicemanId;
+            if ($wasPending) {
+                $booking->booking_status = 'accepted';
+            }
+            $booking->save();
+
+            $mainBooking->serviceman_id = $servicemanId;
+            if ($mainBooking->booking_status === 'pending') {
+                $mainBooking->booking_status = 'accepted';
+            }
+            $mainBooking->serviceman_assign_expires_at = null;
+            $mainBooking->auto_assign_expires_at = null;
+            $mainBooking->auto_assigned = 0;
+            $mainBooking->assignment_mode = 'manual_required';
+            $mainBooking->saveQuietly();
+        } else {
+            $booking->serviceman_id = $servicemanId;
+            if ($wasPending) {
+                $booking->booking_status = 'accepted';
+            }
+            $booking->serviceman_assign_expires_at = null;
+            $booking->auto_assign_expires_at = null;
+            $booking->auto_assigned = 0;
+            $booking->assignment_mode = 'manual_required';
+            $booking->save();
+
+            foreach ($booking->repeat()->whereIn('booking_status', ['pending', 'accepted', 'ongoing'])->get() as $repeat) {
+                $repeat->serviceman_id = $servicemanId;
+                if ($repeat->booking_status === 'pending') {
+                    $repeat->booking_status = 'accepted';
+                }
+                $repeat->saveQuietly();
+            }
+        }
+
+        // Purane countdown slots band karo, history ke liye accepted slot rakho.
+        BookingServiceman::where('booking_id', $mainBooking->id)
+            ->where('status', BookingServiceman::STATUS_PENDING)
+            ->update(['status' => BookingServiceman::STATUS_EXPIRED]);
+
+        BookingServiceman::updateOrCreate(
+            ['booking_id' => $mainBooking->id, 'serviceman_id' => $servicemanId],
+            ['status' => BookingServiceman::STATUS_ACCEPTED, 'expires_at' => now()]
+        );
+
+        ProviderBookingTimer::where('booking_id', $mainBooking->id)
+            ->where('status', 'pending')
+            ->update(['status' => 'accepted']);
+
+        if ($wasPending) {
+            try {
+                $history = new \Modules\BookingModule\Entities\BookingStatusHistory();
+                $history->booking_id = $isRepeat ? 0 : $mainBooking->id;
+                if ($isRepeat) {
+                    $history->booking_repeat_id = $booking->id;
+                }
+                $history->changed_by = $changedBy ?: ($serviceman->user_id ?? $servicemanId);
+                $history->booking_status = 'accepted';
+                $history->save();
+            } catch (\Throwable $e) {
+                // history optional hai; assignment fail nahi honi chahiye
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('startWithinProviderAssignment')) {
+    /**
+     * Booking already provider ke paas hai (zone pick ya customer ne khud chuna)
+     * — ab provider ke auto-assign toggle ke hisab se aage ka flow:
+     *  - toggle ON  -> provider decision window (wait time countdown)
+     *  - toggle OFF -> nearest serviceman request (automatic)
+     */
+    function startWithinProviderAssignment($booking): void
+    {
+        try {
+            $booking->refresh();
+
+            if ($booking->booking_status !== 'pending' || !$booking->provider_id) {
+                return;
+            }
+
+            $provider = Provider::with('owner:id,fcm_token,current_language_key')
+                ->where('id', $booking->provider_id)
+                ->first();
+            if (!$provider) {
+                return;
+            }
+
+            if ((int) $provider->auto_assign_mode === 1) {
+                // Toggle ON: provider ko booking mile; provider ek category-
+                // eligible serviceman choose karega. Iske baad sirf wahi staff
+                // booking request dekhega.
+                startProviderDecisionWindow($booking, $provider);
+                return;
+            }
+
+            // Toggle OFF: existing nearest-first auto-dispatch flow.
+            $booking->assignment_mode = 'auto';
+            $booking->auto_assigned = 0;
+            $booking->auto_assign_expires_at = null;
+            $booking->save();
+            dispatchNearestServicemanRequest($booking);
+        } catch (\Throwable $e) {
+            Log::error('startWithinProviderAssignment failed: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('startProviderDecisionWindow')) {
+    /**
+     * Toggle ON: provider ko push + decision timer. Expiry ke baad booking
+     * dashboard ke AI-assigned section me pending rahegi; system auto-dispatch
+     * nahi karega, kyunki provider ko staff choose karna hai.
+     */
+    function startProviderDecisionWindow($booking, $provider): void
+    {
+        $waitTime = max(30, (int) ($provider->auto_assign_wait_time ?: 120));
+
+        $booking->assignment_mode = 'provider_manual';
+        $booking->auto_assigned = 1;
+        $booking->auto_assign_expires_at = now()->addSeconds($waitTime);
+        $booking->save();
+
+        ProviderBookingTimer::updateOrCreate(
+            ['booking_id' => $booking->id, 'provider_id' => $provider->id],
+            ['status' => 'pending', 'expires_at' => $booking->auto_assign_expires_at]
+        );
+
+        // Provider ko notification bhejo (app side me full-screen popup khulta hai)
+        // Notification message: "AI-assigned booking - nearest service man available"
+        try {
+            $fcmToken = $provider?->owner?->fcm_token ?? null;
+            $languageKey = $provider?->owner?->current_language_key;
+            $title = get_push_notification_message('new_service_request_arrived', 'provider_notification', $languageKey)
+                ?? 'New Booking Request! AI-assigned - nearest serviceman available';
+
+            if (!is_null($fcmToken)) {
+                $notification = isNotificationActive($provider->id, 'booking', 'notification', 'provider');
+                if ($notification && sendDeviceNotificationPermission($provider->id)) {
+                    device_notification(
+                        $fcmToken,
+                        $title,
+                        'A new booking request is waiting for you. Assign servicemen before the timer ends.',
+                        null,
+                        $booking->id,
+                        'new_booking_request',
+                        null, null, null, null,
+                        $booking->is_repeated ? 'repeat' : 'regular'
+                    );
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::error('startProviderDecisionWindow notification failed: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('dispatchNearestServicemanRequest')) {
+    /**
+     * Toggle OFF (automatic): provider ke sabse NEAREST serviceman (customer
+     * location se distance, live location ke hisab se) ko request bhejo.
+     * Accept nahi hua -> timer expiry pe agla nearest (loop).
+     * Sabne mana -> provider ko "manually assign karo" push.
+     */
+    function dispatchNearestServicemanRequest($booking): void
+    {
+        try {
+            if ($booking->booking_status !== 'pending' || !$booking->provider_id) {
+                return;
+            }
+
+            // team ka koi live pending slot hai to already assignment chal rahi hai
+            $hasLiveSlot = BookingServiceman::where('booking_id', $booking->id)
+                ->where('status', BookingServiceman::STATUS_PENDING)
+                ->where('expires_at', '>', now())
+                ->exists();
+            if ($hasLiveSlot) {
+                return;
+            }
+
+            // A full provider-wide fallback cycle has ended. Stop here and
+            // ask the provider to assign manually instead of rebroadcasting
+            // the same booking forever. Provider-selected assignments also
+            // return to the provider if nobody accepts them.
+            if (in_array($booking->assignment_mode, ['zone_pending', 'provider_manual', 'manual_required'], true)) {
+                if ($booking->assignment_mode !== 'manual_required') {
+                    $booking->assignment_mode = 'manual_required';
+                    $booking->saveQuietly();
+                }
+                notifyProviderToAssignManually(
+                    Provider::with('owner:id,fcm_token,current_language_key')->find($booking->provider_id),
+                    $booking
+                );
+                return;
+            }
+
+            $provider = Provider::with('owner:id,fcm_token,current_language_key')
+                ->where('id', $booking->provider_id)
+                ->first();
+            if (!$provider) {
+                return;
+            }
+
+            $waitTime = max(30, (int) ($provider->auto_assign_wait_time ?: 120));
+            $alreadyTried = getTriedServicemanIds($booking);
+
+            // "Book again with same serviceman": preferred serviceman ko pehle
+            // chance — accept nahi kiya (decline/timeout) to slot tried list me
+            // add ho chuka hai aur neeche normal nearest flow age badhega.
+            $preferredId = $booking->preferred_serviceman_id ?? null;
+            if ($preferredId && !in_array($preferredId, $alreadyTried, true)) {
+                $bookingSubCategoryId = $booking->sub_category_id
+                    ?? $booking->detail?->first()?->service?->sub_category_id
+                    ?? null;
+
+                $preferred = Serviceman::with('user:id,fcm_token,current_language_key')
+                    ->where('id', $preferredId)
+                    ->where('provider_id', $booking->provider_id)
+                    ->whereHas('user', function ($query) {
+                        $query->where('is_active', 1);
+                    })
+                    // Category filter (STRICT — same as findNearestServicemen):
+                    // preferred serviceman ki booking category assign honi chahiye.
+                    // Serviceman on duty hona zaroori hai warna next nearest ko jaayega.
+                    ->whereHas('servicemanCategories', function ($query) use ($bookingSubCategoryId) {
+                        $query->where('sub_category_id', $bookingSubCategoryId);
+                    })
+                    ->where('is_on_duty', 1)
+                    ->first();
+                if ($preferred) {
+                    assignBookingToServiceman($booking, $preferred, $waitTime);
+                    return;
+                }
+            }
+
+            $candidates = findNearestServicemen($booking, $provider->id, $alreadyTried);
+
+            if ($candidates->isEmpty()) {
+                // Nearest-to-farthest ek poora pass kisi ne accept nahi kiya:
+                // ab provider ke sab eligible servicemen ko ek saath request do.
+                $broadcastCandidates = findNearestServicemen($booking, $provider->id, []);
+                if ($broadcastCandidates->isEmpty()) {
+                    $booking->assignment_mode = 'manual_required';
+                    $booking->saveQuietly();
+                    notifyProviderToAssignManually($provider, $booking);
+                    return;
+                }
+
+                assignBookingToServicemen($booking, $broadcastCandidates, $waitTime);
+                return;
+            }
+
+            assignBookingToServiceman($booking, $candidates->first(), $waitTime);
+        } catch (\Throwable $e) {
+            Log::error('dispatchNearestServicemanRequest failed: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('assignBookingToServicemen')) {
+    /** Full sequential pass ke baad sab eligible servicemen ko ek saath dikhayein. */
+    function assignBookingToServicemen($booking, $servicemen, int $waitTime): void
+    {
+        $servicemen = collect($servicemen)->values();
+        if ($servicemen->isEmpty()) {
+            return;
+        }
+
+        $expiresAt = now()->addSeconds($waitTime);
+        foreach ($servicemen as $serviceman) {
+            BookingServiceman::updateOrCreate(
+                ['booking_id' => $booking->id, 'serviceman_id' => $serviceman->id],
+                ['status' => BookingServiceman::STATUS_PENDING, 'expires_at' => $expiresAt]
+            );
+        }
+
+        // Closest serviceman remains the lead; acceptBooking's booking row lock
+        // ensures only one of these pending servicemen can accept successfully.
+        $booking->serviceman_id = $servicemen->first()->id;
+        $booking->serviceman_assign_expires_at = $expiresAt;
+        $booking->assignment_mode = 'zone_pending';
+        $booking->save();
+
+        // Sab eligible servicemen (lead inclusive) ko notification bhejo
+        foreach ($servicemen as $serviceman) {
+            try {
+                $token = $serviceman->user?->fcm_token;
+                if ($token) {
+                    device_notification(
+                        $token,
+                        'New Service Assignment',
+                        'A booking is available. Accept before the timer ends.',
+                        null,
+                        $booking->id,
+                        'new_booking_request'
+                    );
+                }
+            } catch (\Throwable $e) {
+                Log::error('assignBookingToServicemen notification failed: ' . $e->getMessage());
+            }
+        }
+    }
+}
+
+if (!function_exists('getTriedServicemanIds')) {
+    /**
+     * Is booking me already bheje ja chuke servicemen (koi bhi status) —
+     * taaki unhe dubara request na jaaye
+     */
+    function getTriedServicemanIds($booking): array
+    {
+        return BookingServiceman::where('booking_id', $booking->id)->pluck('serviceman_id')->toArray();
+    }
+}
+
+if (!function_exists('notifyProviderToAssignManually')) {
+    /**
+     * Automatic assignment fail (koi available serviceman nahi) — provider ko push
+     */
+    function notifyProviderToAssignManually($provider, $booking): void
+    {
+        try {
+            $fcmToken = $provider?->owner?->fcm_token ?? null;
+            if (is_null($fcmToken)) {
+                return;
+            }
+            $notification = isNotificationActive($provider->id, 'booking', 'notification', 'provider');
+            if ($notification && sendDeviceNotificationPermission($provider->id)) {
+                device_notification(
+                    $fcmToken,
+                    'No serviceman available — please assign manually',
+                    'status',
+                    null,
+                    $booking->id,
+                    'booking'
+                );
+            }
+        } catch (\Throwable $e) {
+            Log::error('notifyProviderToAssignManually failed: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('getIgnoredProviderIds')) {
+    function getIgnoredProviderIds($booking): array
+    {
+        return DB::table('booking_ignores')->where('booking_id', $booking->id)->pluck('provider_id')->toArray();
+    }
+}
+
+if (!function_exists('getServiceSingleProviderLockId')) {
+    /**
+     * Services ke group me se single-provider exclusive lock provider id return karo.
+     * - specific mode: admin ne jo provider select kiya wahi
+     * - any_first: jo pehle subscribe karke claim kar chuka hai
+     * Multiple different locks hue to pehla lock use hota hai (edge case).
+     */
+    function getServiceSingleProviderLockId($serviceIds): ?string
+    {
+        $serviceIds = collect($serviceIds)->filter()->unique()->values();
+        if ($serviceIds->isEmpty()) {
+            return null;
+        }
+
+        return \Modules\ServiceManagement\Entities\Service::withoutGlobalScope('zone_wise_data')
+            ->withoutGlobalScope('translate')
+            ->whereIn('id', $serviceIds)
+            ->where('is_single_provider', 1)
+            ->whereNotNull('single_provider_id')
+            ->pluck('single_provider_id')
+            ->first();
+    }
+}
+
+if (!function_exists('getBookingSingleProviderLockId')) {
+    function getBookingSingleProviderLockId($booking): ?string
+    {
+        $serviceIds = $booking->detail()->pluck('service_id');
+        return getServiceSingleProviderLockId($serviceIds);
+    }
+}
+
+if (!function_exists('getExpiredTimerProviderIds')) {
+    function getExpiredTimerProviderIds($booking): array
+    {
+        return ProviderBookingTimer::where('booking_id', $booking->id)
+            ->whereIn('status', ['expired', 'ignored'])
+            ->pluck('provider_id')
+            ->toArray();
+    }
+}
+
+if (!function_exists('assignBookingToProvider')) {
+    /**
+     * Booking ko specific provider ko assign karo + timer start karo + notification bhejo
+     */
+    function assignBookingToProvider($booking, $provider): void
+    {
+        $waitTime = $provider->auto_assign_mode
+            ? (int) ($provider->auto_assign_wait_time ?: 120)
+            : 120; // default 2 min
+
+        $booking->provider_id = $provider->id;
+        $booking->auto_assigned = 1;
+        $booking->auto_assign_expires_at = now()->addSeconds($waitTime);
+        $booking->assigned_provider_id = null;
+        $booking->save();
+
+        ProviderBookingTimer::create([
+            'booking_id' => $booking->id,
+            'provider_id' => $provider->id,
+            'status' => 'pending',
+            'expires_at' => $booking->auto_assign_expires_at,
+        ]);
+
+        // Provider ko notification bhejo (full-screen popup app side par handle hota hai)
+        try {
+            $fcmToken = $provider?->owner?->fcm_token ?? null;
+            $languageKey = $provider?->owner?->current_language_key;
+            $title = get_push_notification_message('new_service_request_arrived', 'provider_notification', $languageKey)
+                ?? 'New Booking Request!';
+
+            if (!is_null($fcmToken)) {
+                $notification = isNotificationActive($provider->id, 'booking', 'notification', 'provider');
+                if ($notification && sendDeviceNotificationPermission($provider->id)) {
+                    device_notification(
+                        $fcmToken,
+                        $title,
+                        'auto_assign',
+                        null,
+                        $booking->id,
+                        'new_booking_request',
+                        null, null, null, null,
+                        $booking->is_repeated ? 'repeat' : 'regular'
+                    );
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::error('assignBookingToProvider notification failed: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('moveBookingToNextProvider')) {
+    /**
+     * Current provider reject/expire hone par next eligible provider ko assign karo
+     */
+    function moveBookingToNextProvider($booking, array $excludeProviderIds = []): void
+    {
+        try {
+            // Single-provider exclusive: reject/expiry ke baad kisi aur provider ko nahi dena
+            $lockedProviderId = getBookingSingleProviderLockId($booking);
+            if ($lockedProviderId) {
+                $stillEligible = collect($excludeProviderIds)->contains($lockedProviderId);
+                if (!$stillEligible) {
+                    $relocked = Provider::where('id', $lockedProviderId)
+                        ->where('zone_id', $booking->zone_id)
+                        ->where('is_active', 1)
+                        ->where('is_approved', 1)
+                        ->where('is_suspended', 0)
+                        ->where('service_availability', 1)
+                        ->with('owner:id,fcm_token,current_language_key')
+                        ->first();
+                    if ($relocked) {
+                        assignBookingToProvider($booking, $relocked);
+                        return;
+                    }
+                }
+                // Sirf yehi provider allowed hai — pending chhod do
+                $booking->provider_id = null;
+                $booking->auto_assigned = 0;
+                $booking->auto_assign_expires_at = null;
+                $booking->save();
+                return;
+            }
+
+            $exclude = array_unique(array_merge(
+                $excludeProviderIds,
+                getIgnoredProviderIds($booking),
+                getExpiredTimerProviderIds($booking)
+            ));
+
+            [$bookingLat, $bookingLng] = getBookingCoordinates($booking);
+            $providers = findNearestProviders($booking->zone_id, $booking->sub_category_id, $exclude, 20, $bookingLat, $bookingLng);
+
+            if ($providers->isNotEmpty()) {
+                assignBookingToProvider($booking, $providers->first());
+            } else {
+                // koi provider available nahi -> booking pending reh jayegi, manual assign hoga
+                $booking->provider_id = null;
+                $booking->auto_assigned = 0;
+                $booking->auto_assign_expires_at = null;
+                $booking->save();
+
+                // customer ko batao ki abhi tak provider nahi mila
+                try {
+                    $fcmToken = $booking?->customer?->fcm_token ?? null;
+                    if (!is_null($fcmToken)) {
+                        $notification = isNotificationActive(null, 'booking', 'notification', 'user');
+                        if ($notification) {
+                            device_notification($fcmToken, 'Still finding provider for your booking', null, null, $booking->id, 'booking');
+                        }
+                    }
+                } catch (\Throwable $e) {
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::error('moveBookingToNextProvider failed: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('processExpiredAutoAssign')) {
+    /**
+     * Scheduled job se call hota hai — expired provider decision timers process karo
+     *  - provider_manual (ON) window expire -> system khud nearest serviceman assign kare
+     *  - legacy provider timers -> next provider (fallback)
+     */
+    function processExpiredAutoAssign(): void
+    {
+        $expiredBookings = Booking::where('auto_assigned', 1)
+            ->where('booking_status', 'pending')
+            ->whereNotNull('auto_assign_expires_at')
+            ->where('auto_assign_expires_at', '<=', now())
+            ->limit(50)
+            ->get();
+
+        foreach ($expiredBookings as $booking) {
+            DB::transaction(function () use ($booking) {
+                // pending timer ko expired mark karo
+                ProviderBookingTimer::where('booking_id', $booking->id)
+                    ->where('status', 'pending')
+                    ->where('expires_at', '<=', now())
+                    ->update(['status' => 'expired']);
+
+                // Customer ko batayein ki provider ka wait time expire ho gaya, system naya provider dhund raha hai
+                // Sirf pehli baar expire hone par notification bhejo (spam bachne ke liye)
+                $wasAlreadyExpired = $booking->auto_assign_expires_at === null;
+                try {
+                    if (!$wasAlreadyExpired) {
+                        $fcmToken = $booking?->customer?->fcm_token ?? null;
+                        if (!is_null($fcmToken)) {
+                            $notification = isNotificationActive(null, 'booking', 'notification', 'user');
+                            if ($notification) {
+                                device_notification(
+                                    $fcmToken,
+                                    'Provider wait time expired',
+                                    'System is finding a new available serviceman for your booking. Please wait.',
+                                    null,
+                                    $booking->id,
+                                    'booking'
+                                );
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    Log::error('Customer timer expire notification failed: ' . $e->getMessage());
+                }
+
+                if ($booking->assignment_mode === 'provider_manual' && $booking->provider_id) {
+                    // Timer expire hua — provider ne serviceman nahi choose kiya.
+                    // Ab system apne aap nearest serviceman ko assign kare.
+                    $booking->auto_assigned = 0;
+                    $booking->auto_assign_expires_at = null;
+                    $booking->assignment_mode = 'auto';
+                    $booking->save();
+                    dispatchNearestServicemanRequest($booking);
+                    return;
+                }
+
+                moveBookingToNextProvider($booking);
+            });
+        }
+    }
+}
+
+if (!function_exists('findNearestServicemen')) {
+    /**
+     * Provider ke servicemen — customer location se DISTANCE ke hisab sort.
+     *  - live location (users.current_lat/lng) recent (7 din) ho to distance-wise
+     *  - location na ho / stale ho -> list ke end me
+     *  - already tried (rejected/expired/assigned) exclude
+     *  - inactive user exclude
+     */
+    function findNearestServicemen($booking, $providerId, array $excludeServicemanIds = [])
+    {
+        [$bookingLat, $bookingLng] = getBookingCoordinates($booking);
+
+        // Booking ka sub_category_id nikalo — isi se serviceman filter hoga
+        $bookingSubCategoryId = $booking->sub_category_id
+            ?? $booking->detail?->first()?->service?->sub_category_id
+            ?? null;
+
+        $baseQuery = function () use ($providerId, $excludeServicemanIds, $bookingSubCategoryId) {
+            return Serviceman::where('provider_id', $providerId)
+                ->where('is_on_duty', 1)
+                ->whereNotIn('id', $excludeServicemanIds)
+                ->whereHas('user', function ($query) {
+                    $query->where('is_active', 1);
+                })
+                // Only explicitly assigned category staff can receive a request.
+                ->whereHas('servicemanCategories', function ($query) use ($bookingSubCategoryId) {
+                    $query->where('sub_category_id', $bookingSubCategoryId);
+                })
+                ->with('user:id,fcm_token,current_language_key,first_name,last_name,profile_image,current_lat,current_lng,last_location_updated_at');
+        };
+
+        // CAPACITY (W2.10): bounding-box pre-filter — poor provider ke 1000+
+        // servicemen me se sirf ~55km radius ke candidates load hote hain
+        // (index-friendly). Agar box me koi nahi mila to original full scan
+        // fallback (business behaviour same: door wale bhi end me dikhte hain).
+        $servicemen = collect();
+        if ($bookingLat !== null && $bookingLng !== null) {
+            $latDelta = 0.5; // ~55 km
+            $lngDelta = 0.5 / max(cos(deg2rad((float) $bookingLat)), 0.01);
+            $freshCutoff = now()->subMinutes(5);
+
+            $servicemen = $baseQuery()
+                ->whereHas('user', function ($query) use ($bookingLat, $bookingLng, $latDelta, $lngDelta, $freshCutoff) {
+                    $query->whereNotNull('current_lat')
+                        ->whereNotNull('current_lng')
+                        ->whereBetween('current_lat', [$bookingLat - $latDelta, $bookingLat + $latDelta])
+                        ->whereBetween('current_lng', [$bookingLng - $lngDelta, $bookingLng + $lngDelta])
+                        ->where('last_location_updated_at', '>', $freshCutoff);
+                })
+                ->get();
+        }
+
+        if ($servicemen->isEmpty()) {
+            $servicemen = $baseQuery()->get();
+        }
+
+        return $servicemen
+            ->map(function ($serviceman) use ($bookingLat, $bookingLng) {
+                $lat = $serviceman->user?->current_lat;
+                $lng = $serviceman->user?->current_lng;
+
+                // live location fresh honi chahiye (5 minute ke andar), warna nearest calculation me count na ho
+                $isFresh = $serviceman->user?->last_location_updated_at
+                    ? Carbon::parse($serviceman->user->last_location_updated_at)->gt(now()->subMinutes(5))
+                    : false;
+
+                $serviceman->distance_km = ($bookingLat !== null && $bookingLng !== null
+                    && $lat !== null && $lng !== null && $isFresh)
+                    ? calculateDistance($bookingLat, $bookingLng, (float) $lat, (float) $lng)
+                    : null;
+
+                return $serviceman;
+            })
+            ->sortBy(function ($serviceman) {
+                return $serviceman->distance_km ?? PHP_FLOAT_MAX;
+            })
+            ->values();
+    }
+}
+
+if (!function_exists('assignBookingToServiceman')) {
+    /**
+     * Booking ek (ya team ke) serviceman ko assign karo:
+     *  - booking_servicemen pivot row (status pending + accept deadline)
+     *  - bookings.serviceman_id = lead (jo pehle assign hua)
+     *  - serviceman_assign_expires_at = accept deadline
+     *  - serviceman ko push notification
+     */
+    function assignBookingToServiceman($booking, $serviceman, int $waitTime = 30): void
+    {
+        $expiresAt = now()->addSeconds($waitTime);
+        $previousServicemanId = $booking->serviceman_id;
+
+        BookingServiceman::updateOrCreate(
+            ['booking_id' => $booking->id, 'serviceman_id' => $serviceman->id],
+            ['status' => BookingServiceman::STATUS_PENDING, 'expires_at' => $expiresAt]
+        );
+
+        // Har rotation me current request wale serviceman ko record karo,
+        // taa ki expiry/reject check aur model observer notification sahi chale.
+        $booking->serviceman_id = $serviceman->id;
+        $booking->serviceman_assign_expires_at = $expiresAt;
+        $booking->assignment_mode = 'auto';
+        $booking->save();
+
+        // Agar serviceman_id change hua to model observer (serviceman_assign job)
+        // naye serviceman ko push bhej dega — direct push tabhi bhejo jab id same
+        // rahi (job fire hi nahi hoga), warna serviceman ko 2 notification milte the.
+        if ((string) $previousServicemanId === (string) $booking->serviceman_id) {
+            try {
+                $fcmToken = $serviceman?->user?->fcm_token ?? null;
+                if (!is_null($fcmToken)) {
+                    $title = 'New Service Assignment';
+                    device_notification($fcmToken, $title, 'You have been assigned a new service. Accept before the timer ends.', null, $booking->id, 'new_booking_request');
+                }
+            } catch (\Throwable $e) {
+                Log::error('assignBookingToServiceman notification failed: ' . $e->getMessage());
+            }
+        }
+    }
+}
+
+if (!function_exists('processExpiredServicemanAssign')) {
+    /**
+     * Scheduled job — serviceman accept deadline expire:
+     *  - slot expired mark
+     *  - booking abhi bhi pending hai (kisi ne accept nahi kiya) -> agla nearest
+     *  - sab try ho chuke -> provider ko manual-assign push
+     */
+    function processExpiredServicemanAssign(): void
+    {
+        $expiredSlots = BookingServiceman::where('status', BookingServiceman::STATUS_PENDING)
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<=', now())
+            ->limit(50)
+            ->get();
+
+        foreach ($expiredSlots as $slot) {
+            $shouldDispatch = DB::transaction(function () use ($slot) {
+                $currentSlot = BookingServiceman::where('booking_id', $slot->booking_id)
+                    ->where('serviceman_id', $slot->serviceman_id)
+                    ->lockForUpdate()
+                    ->first();
+                // Scheduler batch me captured slot broadcast ke baad renew hua
+                // ho sakta hai; renewed request ko galti se expire mat karo.
+                if (!$currentSlot
+                    || $currentSlot->status !== BookingServiceman::STATUS_PENDING
+                    || !$currentSlot->expires_at
+                    || $currentSlot->expires_at->isFuture()) {
+                    return false;
+                }
+
+                $currentSlot->status = BookingServiceman::STATUS_EXPIRED;
+                $currentSlot->save();
+
+                $booking = Booking::where('id', $slot->booking_id)->lockForUpdate()->first();
+                if (!$booking || $booking->booking_status !== 'pending') {
+                    return false; // koi accept kar chuka — loop ki zaroorat nahi
+                }
+
+                if ($booking->serviceman_id !== $slot->serviceman_id) {
+                    return false;
+                }
+
+                $booking->serviceman_id = null;
+                $booking->serviceman_assign_expires_at = null;
+                $booking->save();
+                return true;
+            });
+
+            if ($shouldDispatch) {
+                $booking = Booking::find($slot->booking_id);
+                if ($booking) {
+                    dispatchNearestServicemanRequest($booking);
+                }
+            }
+        }
+    }
+}
+
+if (!function_exists('findNextServiceman')) {
+    /**
+     * Agla nearest serviceman (distance-sorted, already-tried exclude)
+     */
+    function findNextServiceman($booking, array $excludeServicemanIds = [])
+    {
+        return findNearestServicemen($booking, $booking->provider_id, $excludeServicemanIds)->first();
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+if (!function_exists('resolveUserFromApiToken')) {
+    /**
+     * Resolve a Passport access token supplied as a query/body value.
+     *
+     * Mobile payment screens open /payment in a webview without an
+     * Authorization header, so the opaque API token is forwarded as
+     * access_token instead of a forgeable base64(user id).
+     */
+    function resolveUserFromApiToken(?string $rawToken): ?\Modules\UserManagement\Entities\User
+    {
+        $rawToken = trim((string) $rawToken);
+        if ($rawToken === '') {
+            return null;
+        }
+
+        // Passport v12 apps carry a JWT access token (eyJ...). Older clients
+        // carry an opaque "id|random" token. Try the opaque token id first.
+        if (str_contains($rawToken, '|')) {
+            $tokenId = explode('|', $rawToken, 2)[0];
+            if ($tokenId === '') {
+                return null;
+            }
+
+            try {
+                $token = \Laravel\Passport\Token::find($tokenId);
+            } catch (\Throwable $exception) {
+                return null;
+            }
+
+            if (!$token || $token->revoked) {
+                return null;
+            }
+
+            if ($token->expires_at && $token->expires_at->isPast()) {
+                return null;
+            }
+
+            return \Modules\UserManagement\Entities\User::find($token->user_id);
+        }
+
+        // JWT access token: let Passport's api guard validate the signature,
+        // expiry, revocation and client before trusting the token owner.
+        try {
+            $request = \Illuminate\Http\Request::create('/api/v1/client/user', 'GET', [], [], [], [
+                'HTTP_AUTHORIZATION' => 'Bearer ' . $rawToken,
+                'HTTP_ACCEPT' => 'application/json',
+            ]);
+
+            $guard = auth()->guard('api');
+            if (method_exists($guard, 'setRequest')) {
+                $guard->setRequest($request);
+            }
+
+            $user = $guard->user();
+            if ($user instanceof \Modules\UserManagement\Entities\User && $user->id) {
+                return $user;
+            }
+        } catch (\Throwable $exception) {
+            // Fall through to the jti lookup below.
+        }
+
+        // Last resort for environments where the guard cannot be rebuilt:
+        // the JWT is signed by us, so reading its jti is safe as long as we
+        // still check the token row (revoked/expired).
+        try {
+            $parts = explode('.', $rawToken);
+            if (count($parts) === 3) {
+                $payload = json_decode(base64_decode(strtr($parts[1], '-_', '+/')), true);
+                $jti = $payload['jti'] ?? null;
+                if ($jti) {
+                    $token = \Laravel\Passport\Token::find($jti);
+                    if ($token && !$token->revoked
+                        && (!$token->expires_at || !$token->expires_at->isPast())) {
+                        return \Modules\UserManagement\Entities\User::find($token->user_id);
+                    }
+                }
+            }
+        } catch (\Throwable $exception) {
+            return null;
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('paymentRedirectUrl')) {
+    /**
+     * Allowlist redirect targets for payment callback URLs.
+     *
+     * Prevents /payment?callback=https://evil.example from turning the payment
+     * success/failure screens into an open redirect.
+     */
+    function paymentRedirectUrl(?string $url): ?string
+    {
+        $url = trim((string) $url);
+        if ($url === '') {
+            return null;
+        }
+
+        $parts = parse_url($url);
+        if ($parts === false || empty($parts['scheme']) || empty($parts['host'])) {
+            return null;
+        }
+
+        if (!in_array(strtolower($parts['scheme']), ['http', 'https'], true)) {
+            return null;
+        }
+
+        $allowedHosts = array_filter(array_map(
+            fn ($host) => strtolower(trim($host)),
+            array_merge(
+                [(string) parse_url(config('app.url'), PHP_URL_HOST)],
+                explode(',', (string) env('PAYMENT_CALLBACK_HOSTS', ''))
+            )
+        ));
+
+        if (!in_array(strtolower($parts['host']), $allowedHosts, true)) {
+            return null;
+        }
+
+        return $url;
+    }
+}
