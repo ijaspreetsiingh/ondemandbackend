@@ -21,3 +21,31 @@ storage/.DS_Store
 /storage/install.zip
 /storage/update.zip
 database_backup_*
+
+# ===== AWS deployment cleanup =====
+# Documentation / status files (keep README.md only)
+*.md
+!README.md
+*.txt
+!composer.lock
+
+# Build / dev artifacts
+composer.phar
+build.log
+
+# Database backups
+installation/backup/*.sql
+*.sql
+
+# Release archives
+*.zip
+*.rar
+*.7z
+
+# Performance / debug
+/perf/
+.dcdignore
+.styleci.yml
+check_gallery.php
+check_ids.php
+test_booking_flow.php
