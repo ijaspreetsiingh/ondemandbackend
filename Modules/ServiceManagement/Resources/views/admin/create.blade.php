@@ -1121,7 +1121,7 @@
                 console.error('bootstrap/cropper not loaded');
                 return;
             }
-            var cropRules = { thumbnail: 1, cover_image: 2 };
+            var cropRules = {};
             var cropper = null, activeInput = null, pendingFile = null, savedPreviewSrc = '';
 
             document.addEventListener('change', function (e) {
