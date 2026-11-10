@@ -93,9 +93,22 @@ class ProviderController extends Controller
         $maxBookingAmount = (business_config('max_booking_amount', 'booking_setup'))->live_values;
 
         if (in_array('top_cards', $request['sections'])) {
-            $account = $this->account->where('user_id', $request->user()->id)->first();
+            $provider = $request->user()->provider;
+            $providerId = $provider->id;
+            // Provider's own commission earning (all time), not serviceman share.
+            $totalCommission = (float) DB::table('booking_details_amounts as amounts')
+                ->join('bookings as booking', 'amounts.booking_id', '=', 'booking.id')
+                ->whereNull('amounts.booking_repeat_id')
+                ->where('booking.provider_id', $providerId)
+                ->where('booking.booking_status', 'completed')
+                ->sum(DB::raw('CASE WHEN amounts.provider_commission > 0 THEN amounts.provider_commission ELSE amounts.provider_earning END'));
+            $totalCommission += (float) DB::table('booking_details_amounts as amounts')
+                ->join('booking_repeats as booking_repeat', 'amounts.booking_repeat_id', '=', 'booking_repeat.id')
+                ->where('booking_repeat.provider_id', $providerId)
+                ->where('booking_repeat.booking_status', 'completed')
+                ->sum(DB::raw('CASE WHEN amounts.provider_commission > 0 THEN amounts.provider_commission ELSE amounts.provider_earning END'));
             $data[] = ['top_cards' => [
-                'total_earning' => $account['received_balance'] + $account['total_withdrawn'],
+                'total_earning' => round($totalCommission, 2),
                 'total_subscribed_services' => $this->subscribedService->where('provider_id', $request->user()->provider->id)
                     ->with(['sub_category'])
                     ->whereHas('category', function ($query) {
@@ -282,10 +295,11 @@ class ProviderController extends Controller
 
     public function earningStatistics(Request $request)
     {
-        $userId = $request->user()->id;
+        $provider = $request->user()->provider;
+        $providerId = $provider->id;
         $now = Carbon::now();
 
-        // Week starts on Sunday
+        // Week starts on Monday
         $startOfWeek = $now->copy()->startOfWeek(Carbon::MONDAY);
         $endOfWeek   = $now->copy()->endOfWeek(Carbon::SUNDAY);
 
@@ -294,6 +308,9 @@ class ProviderController extends Controller
 
         $startOfYear = $now->copy()->startOfYear();
         $endOfYear   = $now->copy()->endOfYear();
+
+        $startOfToday = $now->copy()->startOfDay();
+        $endOfToday   = $now->copy()->endOfDay();
 
         // Previous periods
         $lastWeekStart = $startOfWeek->copy()->subWeek();
@@ -305,34 +322,53 @@ class ProviderController extends Controller
         $lastYearStart = $startOfYear->copy()->subYear();
         $lastYearEnd   = $endOfYear->copy()->subYear();
 
-        $transaction = DB::table('transactions')
-            ->where('to_user_id', $userId)
-            ->where('credit', '>', 0)
-            ->whereIn('to_user_account', ['received_balance', 'total_withdrawn']);
+        $yesterdayStart = $now->copy()->subDay()->startOfDay();
+        $yesterdayEnd   = $now->copy()->subDay()->endOfDay();
 
-        // Helper to calculate total credit in range
-        $calcEarning = function ($start, $end) use ($transaction) {
-            return (clone $transaction)
-                ->whereBetween('created_at', [$start, $end])
-                ->sum('credit');
+        // Provider's own commission earning (not serviceman share).
+        // Falls back to provider_earning for old rows where provider_commission was not stored.
+        $sumEarning = function ($start, $end) use ($providerId) {
+            $regular = DB::table('booking_details_amounts as amounts')
+                ->join('bookings as booking', 'amounts.booking_id', '=', 'booking.id')
+                ->whereNull('amounts.booking_repeat_id')
+                ->where('booking.provider_id', $providerId)
+                ->where('booking.booking_status', 'completed')
+                ->whereBetween('booking.created_at', [$start, $end])
+                ->sum(DB::raw('CASE WHEN amounts.provider_commission > 0 THEN amounts.provider_commission ELSE amounts.provider_earning END'));
+
+            $repeat = DB::table('booking_details_amounts as amounts')
+                ->join('booking_repeats as booking_repeat', 'amounts.booking_repeat_id', '=', 'booking_repeat.id')
+                ->where('booking_repeat.provider_id', $providerId)
+                ->where('booking_repeat.booking_status', 'completed')
+                ->whereBetween('booking_repeat.created_at', [$start, $end])
+                ->sum(DB::raw('CASE WHEN amounts.provider_commission > 0 THEN amounts.provider_commission ELSE amounts.provider_earning END'));
+
+            return (float) $regular + (float) $repeat;
         };
 
         // Current
-        $thisWeek  = $calcEarning($startOfWeek, $endOfWeek);
-        $thisMonth = $calcEarning($startOfMonth, $endOfMonth);
-        $thisYear  = $calcEarning($startOfYear, $endOfYear);
+        $today  = $sumEarning($startOfToday, $endOfToday);
+        $thisWeek  = $sumEarning($startOfWeek, $endOfWeek);
+        $thisMonth = $sumEarning($startOfMonth, $endOfMonth);
+        $thisYear  = $sumEarning($startOfYear, $endOfYear);
 
         // Previous
-        $lastWeek  = $calcEarning($lastWeekStart, $lastWeekEnd);
-        $lastMonth = $calcEarning($lastMonthStart, $lastMonthEnd);
-        $lastYear  = $calcEarning($lastYearStart, $lastYearEnd);
+        $yesterday  = $sumEarning($yesterdayStart, $yesterdayEnd);
+        $lastWeek  = $sumEarning($lastWeekStart, $lastWeekEnd);
+        $lastMonth = $sumEarning($lastMonthStart, $lastMonthEnd);
+        $lastYear  = $sumEarning($lastYearStart, $lastYearEnd);
 
         // % change
+        $todayChange  = $yesterday  > 0 ? (($today  - $yesterday)  / $yesterday)  * 100 : 0;
         $weekChange  = $lastWeek  > 0 ? (($thisWeek  - $lastWeek)  / $lastWeek)  * 100 : 0;
         $monthChange = $lastMonth > 0 ? (($thisMonth - $lastMonth) / $lastMonth) * 100 : 0;
         $yearChange  = $lastYear  > 0 ? (($thisYear  - $lastYear)  / $lastYear)  * 100 : 0;
 
         $data = [
+            'today' => [
+                'total' => round($today, 2),
+                'change' => round($todayChange, 2),
+            ],
             'this_week' => [
                 'total' => round($thisWeek, 2),
                 'change' => round($weekChange, 2),
@@ -344,6 +380,13 @@ class ProviderController extends Controller
             'this_year' => [
                 'total' => round($thisYear, 2),
                 'change' => round($yearChange, 2),
+            ],
+            'commission' => [
+                'admin_percent' => providerCommissionPercentage($provider),
+                'provider_percent' => (int) ($provider->independent_mode ?? 0) === 1
+                    ? (float) ($provider->provider_commission_percent ?? 0)
+                    : (100 - providerCommissionPercentage($provider)),
+                'independent_mode' => (int) ($provider->independent_mode ?? 0),
             ],
         ];
 

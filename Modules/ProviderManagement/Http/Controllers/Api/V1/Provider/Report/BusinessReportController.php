@@ -148,7 +148,7 @@ class BusinessReportController extends Controller
                     DB::raw('sum(campaign_discount_by_admin) as campaign_discount_by_admin'),
                     DB::raw('sum(campaign_discount_by_provider) as campaign_discount_by_provider'),
                     DB::raw('sum(admin_commission) as admin_commission'),
-                    DB::raw('sum(provider_earning) as provider_earning'),
+                    DB::raw("sum(CASE WHEN provider_commission > 0 THEN provider_commission ELSE provider_earning END) as provider_earning"),
 
                     DB::raw($groupByDeterministic.'(created_at) '.$groupByDeterministic)
                 );
@@ -365,7 +365,7 @@ class BusinessReportController extends Controller
                     DB::raw('sum(campaign_discount_by_admin) as campaign_discount_by_admin'),
                     DB::raw('sum(campaign_discount_by_provider) as campaign_discount_by_provider'),
                     DB::raw('sum(admin_commission) as admin_commission'),
-                    DB::raw('sum(provider_earning) as provider_earning'),
+                    DB::raw("sum(CASE WHEN provider_commission > 0 THEN provider_commission ELSE provider_earning END) as provider_earning"),
 
                     DB::raw($groupByDeterministic.'(created_at) '.$groupByDeterministic)
                 );
@@ -598,7 +598,7 @@ class BusinessReportController extends Controller
                     DB::raw('sum(discount_by_provider) as discount_by_provider'),
                     DB::raw('sum(coupon_discount_by_provider) as coupon_discount_by_provider'),
                     DB::raw('sum(campaign_discount_by_provider) as campaign_discount_by_provider'),
-                    DB::raw('sum(provider_earning) as provider_earning'),
+                    DB::raw("sum(CASE WHEN provider_commission > 0 THEN provider_commission ELSE provider_earning END) as provider_earning"),
 
                     DB::raw($groupByDeterministic.'(created_at) '.$groupByDeterministic)
                 );

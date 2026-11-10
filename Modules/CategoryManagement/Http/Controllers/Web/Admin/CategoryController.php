@@ -136,6 +136,8 @@ class CategoryController extends Controller
         $category->image = file_uploader('category/', APPLICATION_IMAGE_FORMAT, $request->file('image'));
         $category->parent_id = 0;
         $category->position = 1;
+        $category->is_active = 1;
+        $category->is_featured = 0;
         $category->description = null;
         $category->save();
         $category->zones()->sync($request->zone_ids);
@@ -308,6 +310,9 @@ class CategoryController extends Controller
     {
         $this->authorize('category_manage_status');
         $category = $this->category->where('id', $id)->first();
+        if (!$category) {
+            return response()->json(response_formatter(CATEGORY_204), 204);
+        }
         $this->category->where('id', $id)->update(['is_active' => !$category->is_active]);
 
         return response()->json(response_formatter(DEFAULT_STATUS_UPDATE_200), 200);
@@ -324,6 +329,9 @@ class CategoryController extends Controller
     {
         $this->authorize('category_manage_status');
         $category = $this->category->where('id', $id)->first();
+        if (!$category) {
+            return response()->json(response_formatter(CATEGORY_204), 204);
+        }
         $this->category->where('id', $id)->update(['is_featured' => !$category->is_featured]);
 
         return response()->json(response_formatter(DEFAULT_UPDATE_200), 200);

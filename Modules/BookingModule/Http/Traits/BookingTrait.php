@@ -1949,6 +1949,9 @@ trait BookingTrait
             $servicemanEarning = max(0, $providerReceivableTotalAmount - $adminCommissionBase - $platformFee - $providerCommission);
         } else {
             $adminCommission = providerAdminCommission($provider, $providerReceivableTotalAmount);
+            // Default mode: provider keeps the full provider-side amount (total - admin commission)
+            $providerCommission = $providerReceivableTotalAmount - $adminCommission;
+            $servicemanEarning = 0;
         }
 
         $adminCommissionWithoutCost = $adminCommission - $promotionalCostByAdmin;

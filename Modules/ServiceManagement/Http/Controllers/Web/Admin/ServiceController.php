@@ -226,6 +226,7 @@ class ServiceController extends Controller
 
         $service->tax = $request->tax;
         $service->min_bidding_price = $request->min_bidding_price;
+        $service->is_active = 1;
         $service->is_single_provider = (int) $request->is_single_provider === 1 ? 1 : 0;
         $service->single_provider_mode = $service->is_single_provider ? $request->single_provider_mode : null;
         $service->single_provider_id = null;
@@ -779,6 +780,9 @@ class ServiceController extends Controller
     {
         $this->authorize('service_manage_status');
         $service = $this->service->where('id', $id)->first();
+        if (!$service) {
+            return response()->json(response_formatter(DEFAULT_204), 204);
+        }
         $this->service->where('id', $id)->update(['is_active' => !$service->is_active]);
 
         return response()->json(response_formatter(DEFAULT_STATUS_UPDATE_200), 200);
@@ -974,6 +978,24 @@ class ServiceController extends Controller
         $variants = $this->variation->where(['service_id' => $service_id])->get();
 
         return response()->json(['flag' => 1, 'template' => view('servicemanagement::admin.partials._update-variant-data', compact('zones', 'variants'))->render()]);
+    }
+
+    /**
+     * Return active sub-categories for a given parent category (used by service create/edit).
+     */
+    public function ajaxGetSubcategories(string $categoryId): JsonResponse
+    {
+        $subcategories = $this->category
+            ->ofStatus(1)
+            ->ofType('sub')
+            ->where('parent_id', $categoryId)
+            ->orderBy('name', 'asc')
+            ->get(['id', 'name']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $subcategories,
+        ], 200);
     }
 
     function searchForKey($variant, $array): int|string|null

@@ -101,6 +101,7 @@ class SubCategoryController extends Controller
         $category->image = file_uploader('category/', APPLICATION_IMAGE_FORMAT, $request->file('image'));
         $category->parent_id = $request['parent_id'];
         $category->position = 2;
+        $category->is_active = 1;
         $category->description = $request->short_description[array_search('default', $request->lang)];
         $category->save();
 
@@ -301,7 +302,7 @@ class SubCategoryController extends Controller
     public function destroy(Request $request, $id): RedirectResponse
     {
         $this->authorize('category_delete');
-        $category = $this->category->where('id', $id)->ofType($this)->first();
+        $category = $this->category->where('id', $id)->ofType('sub')->first();
         if ($category) {
             file_remover('category/', $category->image);
             DB::transaction(function () use ($category, $id) {
@@ -328,6 +329,9 @@ class SubCategoryController extends Controller
     {
         $this->authorize('category_manage_status');
         $category = $this->category->ofType('sub')->where('id', $id)->first();
+        if (!$category) {
+            return response()->json(response_formatter(CATEGORY_204), 204);
+        }
         $this->category->where('id', $id)->update(['is_active' => !$category->is_active]);
 
         return response()->json(response_formatter(DEFAULT_STATUS_UPDATE_200), 200);
