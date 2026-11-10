@@ -295,8 +295,7 @@
                                                                         <input type="file" class="upload-file__input"
                                                                                name="thumbnail"
                                                                                accept="image/*"
-                                                                               data-maxFileSize="{{ readableUploadMaxFileSize('image') }}"
-                                                                               required>
+                                                                               data-maxFileSize="{{ readableUploadMaxFileSize('image') }}">
                                                                         <div class="upload-file__img border-dashed-1-gray rounded">
                                                                             <img src="{{asset('public/assets/admin-module/img/img-upload-new-small.png')}}"
                                                                                     alt="{{ translate('service') }}" class="w-100">
@@ -324,8 +323,7 @@
                                                                         <input type="file" class="upload-file__input"
                                                                                name="cover_image"
                                                                                accept="image/*"
-                                                                               data-maxFileSize="{{ readableUploadMaxFileSize('image') }}"
-                                                                               required>
+                                                                               data-maxFileSize="{{ readableUploadMaxFileSize('image') }}">
                                                                         <div class="upload-file__img h-150px  border-dashed-1-gray rounded upload-file__img_banner">
                                                                             <img src="{{asset('public/assets/admin-module/img/img-upload-new.png')}}"
                                                                                  alt="{{ translate('service-cover-image') }}" class="w-100 h-100">
@@ -822,8 +820,8 @@
                     tax: "required",
                     min_bidding_price: "required",
                     "short_description[]": "required",
-                    thumbnail: "required",
-                    cover_image: "required",
+                    // thumbnail: "required",
+                    // cover_image: "required",
                     "description[]": "required",
                     single_provider_mode: {
                         required: {
