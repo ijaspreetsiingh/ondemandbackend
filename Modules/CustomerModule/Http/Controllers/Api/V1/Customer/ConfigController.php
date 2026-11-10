@@ -190,7 +190,7 @@ class ConfigController extends Controller
             'guest_checkout' => (int)(business_config('guest_checkout', 'service_setup'))?->live_values ?? null,
             'partial_payment' => (int)(business_config('partial_payment', 'service_setup'))?->live_values ?? null,
             'booking_additional_charge' => (int)(business_config('booking_additional_charge', 'booking_setup'))?->live_values ?? null,
-            'additional_charge_label_name' => (string)(business_config('additional_charge_label_name', 'booking_setup'))?->live_values ?? null,
+            'additional_charge_label_name' => (((string)(business_config('additional_charge_label_name', 'booking_setup'))?->live_values ?? '')) ?: 'Booking Fee',
             'additional_charge_fee_amount' => (float)(business_config('additional_charge_fee_amount', 'booking_setup'))?->live_values ?? null,
             'offline_payment' => (int)(business_config('offline_payment', 'service_setup'))?->live_values ?? null,
             'partial_payment_combinator' => (string)(business_config('partial_payment_combinator', 'service_setup'))?->live_values ?? null,
@@ -315,7 +315,7 @@ class ConfigController extends Controller
             'offline_payment' => $offlinePayment,
             'booking_additional_charge' => $bookingAdditionalCharge,
             'additional_charge_label_name' => providerBookingFeeLabel($provider)
-                ?? (string) (business_config('additional_charge_label_name', 'booking_setup')?->live_values ?? ''),
+                ?? (((string) (business_config('additional_charge_label_name', 'booking_setup')?->live_values ?? '')) ?: 'Booking Fee'),
             'additional_charge_fee_amount' => bookingExtraFee($provider),
             'provider_tax_percent' => $providerTaxPercent,
         ]), 200);

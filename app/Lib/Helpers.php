@@ -1324,7 +1324,12 @@ if (!function_exists('providerBookingFeeLabel')) {
             return null;
         }
         $label = trim((string) ($provider->booking_fee_label ?? ''));
-        return $label !== '' ? $label : null;
+        if ($label !== '') {
+            return $label;
+        }
+        // Fee set hai par label empty hai -> default label, taaki charge app me show ho.
+        $fee = (float) ($provider->booking_fee ?? 0);
+        return $fee > 0 ? 'Booking Fee' : null;
     }
 }
 
