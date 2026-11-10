@@ -755,15 +755,27 @@ class ServiceController extends Controller
         $this->authorize('service_delete');
         $service = $this->service->where('id', $id)->first();
         if (isset($service)) {
-            foreach (['thumbnail', 'cover_image'] as $item) {
-                file_remover('service/', $service[$item]);
-            }
-            $service->translations()->delete();
-            $service->variations()->delete();
-            $service->delete();
+            try {
+                foreach (['thumbnail', 'cover_image'] as $item) {
+                    file_remover('service/', $service[$item]);
+                }
+                if (is_array($service->gallery)) {
+                    file_remover('service/', $service->gallery);
+                }
+                if (is_array($service->cover_images)) {
+                    file_remover('service/', $service->cover_images);
+                }
+                $service->tags()->detach();
+                $service->translations()->delete();
+                $service->variations()->delete();
+                $service->delete();
 
-            Toastr::success(translate(DEFAULT_DELETE_200['message']));
-            return back();
+                Toastr::success(translate(DEFAULT_DELETE_200['message']));
+                return back();
+            } catch (\Throwable $e) {
+                Toastr::error($e->getMessage());
+                return back();
+            }
         }
         Toastr::success(translate(DEFAULT_204['message']));
         return back();

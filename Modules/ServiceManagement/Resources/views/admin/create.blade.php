@@ -294,7 +294,7 @@
                                                                     <div class="upload-file ratio-1 w-100px form-error-wrap">
                                                                         <input type="file" class="upload-file__input"
                                                                                name="thumbnail"
-                                                                               accept=".{{ implode(',.', array_column(IMAGEEXTENSION, 'key')) }}, |image/*"
+                                                                               accept="image/*"
                                                                                data-maxFileSize="{{ readableUploadMaxFileSize('image') }}"
                                                                                required>
                                                                         <div class="upload-file__img border-dashed-1-gray rounded">
@@ -323,7 +323,7 @@
                                                                     <div class="upload-file h-150px form-error-wrap">
                                                                         <input type="file" class="upload-file__input"
                                                                                name="cover_image"
-                                                                               accept=".{{ implode(',.', array_column(IMAGEEXTENSION, 'key')) }}, |image/*"
+                                                                               accept="image/*"
                                                                                data-maxFileSize="{{ readableUploadMaxFileSize('image') }}"
                                                                                required>
                                                                         <div class="upload-file__img h-150px  border-dashed-1-gray rounded upload-file__img_banner">
