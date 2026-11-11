@@ -24,6 +24,14 @@ class CallController extends Controller
     private const RING_TIMEOUT_SECONDS = 45;
     private const TOKEN_TTL_SECONDS = 3600;
 
+    /**
+     * Answered call itni der baad khud "ended" maan liya jata hai.
+     * App crash / network drop hone par `end` API kabhi nahi chalti aur row
+     * hamesha `answered` reh jati hai — usi se "user is busy on another call"
+     * wala permanent error aata hai.
+     */
+    private const ACTIVE_CALL_TTL_MINUTES = 15;
+
     public function __construct(ChannelList $channelList, ChannelUser $channelUser, Call $call)
     {
         $this->channelList = $channelList;
@@ -37,8 +45,8 @@ class CallController extends Controller
     public function initiate(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'callee_id' => 'required|uuid',
-            'call_type' => 'required|in:voice,video',
+            'callee_id' => 'required|string|max:64',
+            'call_type' => 'nullable|in:voice,video',
             'booking_id' => 'nullable|string|max:64',
         ]);
 
@@ -56,14 +64,19 @@ class CallController extends Controller
             return $this->error(translate('In-app calling is not configured yet'), 403);
         }
 
-        if ($request->callee_id === $caller->id) {
-            return $this->error(translate('You can not call yourself'), 400);
-        }
+        $callType = $request->call_type === 'video' ? 'video' : 'voice';
 
-        $callee = User::find($request->callee_id);
+        // `callee_id` kisi bhi app build se aa sakta hai: user id, provider id ya
+        // serviceman id. Teeno ko login user me resolve karte hain, taake purane
+        // APK bhi bina rebuild kaam karein.
+        $callee = $this->resolveCalleeUser($request->callee_id);
 
         if (!$callee || (int)$callee->is_active !== 1) {
             return $this->error(translate('The user is unavailable'), 404);
+        }
+
+        if ($callee->id === $caller->id) {
+            return $this->error(translate('You can not call yourself'), 400);
         }
 
         // Admin toggle gate: caller + callee dono ke involved providers ke liye
@@ -77,7 +90,14 @@ class CallController extends Controller
             return $this->error(translate('In-app calling is not enabled for this provider'), 403);
         }
 
-        if ($this->hasActiveCall([$caller->id, $callee->id])) {
+        // Atki hui (zombie) calls clear karo — warna "user is busy" permanent ho jata hai.
+        $this->closeStaleCalls();
+
+        // Caller khud nayi call shuru kar raha hai, matlab wo kisi purani call me
+        // nahi hai. Uski purani entries band kar do.
+        $this->closeUserActiveCalls($caller->id);
+
+        if ($this->hasActiveCall([$callee->id])) {
             return $this->error(translate('The user is busy on another call'), 409);
         }
 
@@ -93,7 +113,7 @@ class CallController extends Controller
         $call->callee_id = $callee->id;
         $call->channel_id = $channel->id;
         $call->booking_id = $request->booking_id ?: null;
-        $call->call_type = $request->call_type;
+        $call->call_type = $callType;
         $call->status = 'ringing';
         $call->ring_expires_at = now()->addSeconds(self::RING_TIMEOUT_SECONDS);
         $call->save();
@@ -101,7 +121,7 @@ class CallController extends Controller
         if ($callee->fcm_token) {
             device_notification_for_calling(
                 fcm_token: $callee->fcm_token,
-                title: $request->call_type === 'video' ? translate('Incoming video call') : translate('Incoming call'),
+                title: $call->call_type === 'video' ? translate('Incoming video call') : translate('Incoming call'),
                 description: trim($caller->first_name . ' ' . $caller->last_name),
                 call_id: $call->id,
                 call_type: $call->call_type,
@@ -115,9 +135,7 @@ class CallController extends Controller
             );
         }
 
-        return response()->json(response_formatter(DEFAULT_200, [
-            'call' => $this->formatCall($call, $caller),
-        ]), 200);
+        return $this->callResponse($call, $caller);
     }
 
     /**
@@ -126,7 +144,7 @@ class CallController extends Controller
     public function respond(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'call_id' => 'required|uuid',
+            'call_id' => 'required|string|max:64',
             'action' => 'required|in:accept,reject',
         ]);
 
@@ -180,9 +198,7 @@ class CallController extends Controller
             );
         }
 
-        return response()->json(response_formatter(DEFAULT_200, [
-            'call' => $this->formatCall($call, $me, withToken: true),
-        ]), 200);
+        return $this->callResponse($call, $me, true);
     }
 
     /**
@@ -191,7 +207,7 @@ class CallController extends Controller
     public function end(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'call_id' => 'required|uuid',
+            'call_id' => 'required|string|max:64',
         ]);
 
         if ($validator->fails()) {
@@ -212,16 +228,16 @@ class CallController extends Controller
         $call = $this->normalizeCall($call);
 
         if (in_array($call->status, ['ended', 'rejected', 'cancelled', 'missed'])) {
-            return response()->json(response_formatter(DEFAULT_200, [
-                'call' => $this->formatCall($call, $me),
-            ]), 200);
+            return $this->callResponse($call, $me);
         }
 
         $call->ended_at = now();
 
         if ($call->status === 'answered') {
             $call->status = 'ended';
-            $call->duration = max(0, (int)$call->answered_at->diffInSeconds(now()));
+            $call->duration = $call->answered_at
+                ? max(0, (int)$call->answered_at->diffInSeconds(now()))
+                : 0;
         } elseif ($call->status === 'ringing') {
             $call->status = $call->caller_id === $me->id ? 'cancelled' : 'rejected';
         }
@@ -248,9 +264,7 @@ class CallController extends Controller
             );
         }
 
-        return response()->json(response_formatter(DEFAULT_200, [
-            'call' => $this->formatCall($call, $me),
-        ]), 200);
+        return $this->callResponse($call, $me);
     }
 
     /**
@@ -261,27 +275,32 @@ class CallController extends Controller
     {
         $me = $request->user();
 
+        // Zombie calls (app crash ke baad atki hui) yahin clean ho jati hain.
+        $this->closeStaleCalls();
+
         $call = $this->call
             ->with(['caller', 'callee'])
             ->where(function ($query) use ($me) {
                 $query->where('caller_id', $me->id)->orWhere('callee_id', $me->id);
             })
             ->where(function ($query) {
-                $query->where('status', 'answered')
-                    ->orWhere(function ($query2) {
-                        $query2->where('status', 'ringing')->where('ring_expires_at', '>', now());
-                    });
+                $query->where(function ($query2) {
+                    $query2->where('status', 'answered')
+                        ->where('answered_at', '>=', now()->subMinutes(self::ACTIVE_CALL_TTL_MINUTES));
+                })->orWhere(function ($query2) {
+                    $query2->where('status', 'ringing')->where('ring_expires_at', '>', now());
+                });
             })
             ->latest('created_at')
             ->first();
 
         if ($call) {
             $call = $this->normalizeCall($call);
+
+            return $this->callResponse($call, $me, $call->status === 'answered');
         }
 
-        return response()->json(response_formatter(DEFAULT_200, [
-            'call' => $call ? $this->formatCall($call, $me, withToken: $call->status === 'answered') : null,
-        ]), 200);
+        return $this->okResponse(['call' => null]);
     }
 
     /**
@@ -290,7 +309,7 @@ class CallController extends Controller
     public function status(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'call_id' => 'required|uuid',
+            'call_id' => 'required|string|max:64',
         ]);
 
         if ($validator->fails()) {
@@ -310,9 +329,7 @@ class CallController extends Controller
 
         $call = $this->normalizeCall($call);
 
-        return response()->json(response_formatter(DEFAULT_200, [
-            'call' => $this->formatCall($call, $me, withToken: $call->status === 'answered'),
-        ]), 200);
+        return $this->callResponse($call, $me, $call->status === 'answered');
     }
 
     /**
@@ -321,7 +338,7 @@ class CallController extends Controller
     public function token(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'call_id' => 'required|uuid',
+            'call_id' => 'required|string|max:64',
         ]);
 
         if ($validator->fails()) {
@@ -345,9 +362,7 @@ class CallController extends Controller
             return $this->error(translate('This call is not active'), 400);
         }
 
-        return response()->json(response_formatter(DEFAULT_200, [
-            'call' => $this->formatCall($call, $me, withToken: true),
-        ]), 200);
+        return $this->callResponse($call, $me, true);
     }
 
     /**
@@ -401,9 +416,9 @@ class CallController extends Controller
             return $this->formatCall($call, $me);
         });
 
-        return response()->json(response_formatter(DEFAULT_200, [
+        return $this->okResponse([
             'callHistory' => $calls,
-        ]), 200);
+        ]);
     }
 
     /* ------------------------------------------------------------------ */
@@ -424,13 +439,119 @@ class CallController extends Controller
     }
 
     /**
+     * Success response. `response_code` uppercase me bhi bhejte hain kyunki
+     * purane app builds `'DEFAULT_200'` se compare karte hain, jabke backend
+     * by default lowercase `'default_200'` deta hai. Isse purane APK bina
+     * rebuild kaam karte hain.
+     */
+    private function okResponse(array|object|null $content = null): JsonResponse
+    {
+        $response = response_formatter(DEFAULT_200, $content);
+        $response['response_code'] = strtoupper($response['response_code']);
+
+        return response()->json($response, 200);
+    }
+
+    /**
+     * Call ka payload dono shapes me bhejte hain:
+     *   content.call.*  → naya app build
+     *   content.*       → purana app build (bina rebuild chal jayega)
+     */
+    private function callResponse(Call $call, User $me, bool $withToken = false): JsonResponse
+    {
+        $payload = $this->formatCall($call, $me, $withToken);
+
+        return $this->okResponse(array_merge($payload, [
+            'call' => $payload,
+        ]));
+    }
+
+    /**
+     * `callee_id` user id, provider id ya serviceman id — teeno accept karo.
+     * Purane app builds entity id bhej dete the, isliye resolve karna zaroori hai.
+     */
+    private function resolveCalleeUser($calleeId): ?User
+    {
+        $calleeId = is_string($calleeId) ? trim($calleeId) : '';
+
+        if ($calleeId === '' || $calleeId === '0' || strtolower($calleeId) === 'null') {
+            return null;
+        }
+
+        $user = User::find($calleeId);
+        if ($user) {
+            return $user;
+        }
+
+        $providerUserId = \Modules\ProviderManagement\Entities\Provider::where('id', $calleeId)->value('user_id');
+        if ($providerUserId && ($user = User::find($providerUserId))) {
+            return $user;
+        }
+
+        $servicemanUserId = \Modules\UserManagement\Entities\Serviceman::where('id', $calleeId)->value('user_id');
+        if ($servicemanUserId && ($user = User::find($servicemanUserId))) {
+            return $user;
+        }
+
+        return null;
+    }
+
+    /**
+     * Zombie calls band karo: ring timeout ho chuki ringing → missed,
+     * aur TTL se purani answered → ended. Isse "user busy" wala stuck error
+     * khatam hota hai.
+     */
+    private function closeStaleCalls(): void
+    {
+        $this->call
+            ->where('status', 'ringing')
+            ->whereNotNull('ring_expires_at')
+            ->where('ring_expires_at', '<', now())
+            ->update(['status' => 'missed', 'ended_at' => now()]);
+
+        $cutoff = now()->subMinutes(self::ACTIVE_CALL_TTL_MINUTES);
+
+        $this->call
+            ->where('status', 'answered')
+            ->where(function ($query) use ($cutoff) {
+                $query->where('answered_at', '<', $cutoff)
+                    ->orWhere(function ($query2) use ($cutoff) {
+                        $query2->whereNull('answered_at')->where('created_at', '<', $cutoff);
+                    });
+            })
+            ->update(['status' => 'ended', 'ended_at' => now()]);
+    }
+
+    /**
+     * Ek user ki saari live calls band karo (wo nayi call shuru kar raha hai).
+     */
+    private function closeUserActiveCalls(string $userId): void
+    {
+        $this->call
+            ->where(function ($query) use ($userId) {
+                $query->where('caller_id', $userId)->orWhere('callee_id', $userId);
+            })
+            ->whereIn('status', ['ringing', 'answered'])
+            ->update(['status' => 'ended', 'ended_at' => now()]);
+    }
+
+    /**
      * Ring timeout lazy-mark: 45s baad bina response ke call missed.
+     * Answered call TTL cross kar jaye to ended (app crash / network loss).
      */
     private function normalizeCall(Call $call): Call
     {
         if ($call->status === 'ringing' && $call->ring_expires_at && $call->ring_expires_at->isPast()) {
             $call->status = 'missed';
             $call->ended_at = $call->ended_at ?? now();
+            $call->save();
+        }
+
+        if ($call->status === 'answered' && $call->answered_at
+            && $call->answered_at->lt(now()->subMinutes(self::ACTIVE_CALL_TTL_MINUTES))) {
+            $call->status = 'ended';
+            $call->ended_at = $call->ended_at
+                ?? $call->answered_at->copy()->addMinutes(self::ACTIVE_CALL_TTL_MINUTES);
             $call->save();
         }
 
@@ -472,10 +593,12 @@ class CallController extends Controller
                 }
             })
             ->where(function ($query) {
-                $query->where('status', 'answered')
-                    ->orWhere(function ($query2) {
-                        $query2->where('status', 'ringing')->where('ring_expires_at', '>', now());
-                    });
+                $query->where(function ($query2) {
+                    $query2->where('status', 'answered')
+                        ->where('answered_at', '>=', now()->subMinutes(self::ACTIVE_CALL_TTL_MINUTES));
+                })->orWhere(function ($query2) {
+                    $query2->where('status', 'ringing')->where('ring_expires_at', '>', now());
+                });
             })
             ->exists();
     }
