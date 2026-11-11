@@ -1279,6 +1279,11 @@ class ConfigurationController extends Controller
             //update setup guideline data
             updateSetupGuidelineTutorialsOptions(auth()->user()->id,'email_configuration', 'web');
 
+            if (!$request->expectsJson()) {
+                Toastr::success(translate(DEFAULT_UPDATE_200['message']));
+                return back();
+            }
+
             return response()->json(response_formatter(constant: DEFAULT_UPDATE_200), 200);
         }
 
@@ -1311,6 +1316,11 @@ class ConfigurationController extends Controller
         if ($data['party_name'] == 'google_map'){
             //update setup guideline data
             updateSetupGuidelineTutorialsOptions(auth()->user()->id,'google_map_configuration', 'web');
+        }
+
+        if (!$request->expectsJson()) {
+            Toastr::success(translate(DEFAULT_UPDATE_200['message']));
+            return back();
         }
 
         return response()->json(response_formatter(constant: DEFAULT_UPDATE_200), 200);
@@ -1377,7 +1387,7 @@ class ConfigurationController extends Controller
 
     private function getThirdPartyData($webPage)
     {
-        $data = bs_data($this->businessSetting, $webPage);
+        $data = bs_data($this->businessSetting, $webPage, 1);
         if ($data) {
             return $data;
         }

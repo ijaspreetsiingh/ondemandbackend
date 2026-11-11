@@ -49,7 +49,6 @@
 <body>
 <script>
     localStorage.theme && document.querySelector('body').setAttribute("data-bs-theme", localStorage.theme);
-    $.ajaxSetup({ headers: { 'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content') } });
 </script>
 
 <div class="offcanvas-overlay"></div>
@@ -97,6 +96,9 @@
 
 
 <script src="{{asset('public/assets/admin-module')}}/js/jquery-3.6.0.min.js"></script>
+<script>
+    $.ajaxSetup({ headers: { 'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content') } });
+</script>
 <script src="{{asset('public/assets/admin-module')}}/js/bootstrap.bundle.min.js"></script>
 <script src="{{asset('public/assets/admin-module')}}/plugins/perfect-scrollbar/perfect-scrollbar.min.js"></script>
 <script src="{{asset('public/assets/admin-module')}}/js/main.js"></script>
