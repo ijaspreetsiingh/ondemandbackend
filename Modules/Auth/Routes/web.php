@@ -23,24 +23,29 @@ Route::group(['prefix' => 'provider', 'as' => 'provider.'], function () {
      * functionality is se bilkul untouched hai.
      */
     Route::group(['prefix' => 'auth', 'as' => 'auth.'], function () {
-        $toAdminLogin = fn () => redirect()->route('admin.auth.login');
+        /**
+         * Redirect routes (closure nahi) — warna `php artisan optimize` /
+         * `route:cache` "Unable to prepare route ... Uses Closure" par fail
+         * ho jata hai aur deploy adhoora reh jata hai.
+         */
+        $adminLogin = '/admin/auth/login';
 
-        Route::any('sign-up', $toAdminLogin)->name('sign-up');
-        Route::any('sign-up-submit', $toAdminLogin)->name('sign-up-submit');
-        Route::any('login', $toAdminLogin)->name('login');
-        Route::any('logout', $toAdminLogin)->name('logout');
+        Route::redirect('sign-up', $adminLogin)->name('sign-up');
+        Route::redirect('sign-up-submit', $adminLogin)->name('sign-up-submit');
+        Route::redirect('login', $adminLogin)->name('login');
+        Route::redirect('logout', $adminLogin)->name('logout');
 
-        Route::group(['prefix' => 'reset-password', 'as' => 'reset-password.'], function () use ($toAdminLogin) {
-            Route::any('/', $toAdminLogin)->name('index');
-            Route::any('send-otp', $toAdminLogin)->name('send-otp');
-            Route::any('verify-otp', $toAdminLogin)->name('verify-otp');
-            Route::any('change-password', $toAdminLogin)->name('change-password');
+        Route::group(['prefix' => 'reset-password', 'as' => 'reset-password.'], function () use ($adminLogin) {
+            Route::redirect('/', $adminLogin)->name('index');
+            Route::redirect('send-otp', $adminLogin)->name('send-otp');
+            Route::redirect('verify-otp', $adminLogin)->name('verify-otp');
+            Route::redirect('change-password', $adminLogin)->name('change-password');
         });
 
-        Route::group(['prefix' => 'verification', 'as' => 'verification.'], function () use ($toAdminLogin) {
-            Route::any('/', $toAdminLogin)->name('index');
-            Route::any('send-otp', $toAdminLogin)->name('send-otp');
-            Route::any('verify-otp', $toAdminLogin)->name('verify-otp');
+        Route::group(['prefix' => 'verification', 'as' => 'verification.'], function () use ($adminLogin) {
+            Route::redirect('/', $adminLogin)->name('index');
+            Route::redirect('send-otp', $adminLogin)->name('send-otp');
+            Route::redirect('verify-otp', $adminLogin)->name('verify-otp');
         });
     });
 
