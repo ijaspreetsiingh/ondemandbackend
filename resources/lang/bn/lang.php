@@ -3634,4 +3634,14 @@ _Message' => 'Customer notification for provider bid offer
   'Minimum variant cannot be less than one' => 'Minimum variant cannot be less than one',
   'The topic field is required.' => 'The topic field is required.',
   'payment_method_not_allowed_for_provider' => 'এই প্রোভাইডারের জন্য নির্বাচিত পেমেন্ট পদ্ধতি উপলব্ধ নয়।',
+
+  'everything_your_team_runs_on' => 'Everything your team runs on',
+  'one_console' => 'in one console.',
+  'login_brand_text' => 'Bookings, providers, payments and payouts - one workspace for the people who keep the day moving.',
+  'admin_console' => 'Admin console',
+  'admin_access' => 'Admin access',
+  'login_help_text' => 'Trouble signing in? Contact your workspace owner.',
+  'secure_admin_access' => 'Secure admin access',
+  'email_or_phone' => 'Email or phone',
+  'show' => 'Show',
 );

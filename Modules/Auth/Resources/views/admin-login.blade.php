@@ -64,537 +64,586 @@
             $recaptchaEnabled = false;
             $recaptchaSiteKey = null;
         }
+
+        $brandName = $businessName ?: translate('admin_panel');
     @endphp
     <link rel="shortcut icon" href="{{ $favIcon }}"/>
 
     <link rel="preconnect" href="https://fonts.googleapis.com"/>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=DM+Sans:wght@400;500;700&display=swap"
           rel="stylesheet"/>
     <link rel="stylesheet" href="{{ asset('public/assets/admin-module') }}/css/toastr.css"/>
 
     <style>
         :root {
-            --ink: #0f172a;
-            --muted: #64748b;
-            --line: #e4e8f2;
-            --field: #f7f9fd;
-            --brand-1: #4f46e5;
-            --brand-2: #7c3aed;
-            --brand-3: #06b6d4;
-            --danger: #dc2626;
+            --ink: #111111;
+            --ink-soft: #3a3a3a;
+            --muted: #6f6f6f;
+            --faint: #9a9a9a;
+            --line: #e4e4e4;
+            --line-strong: #cfcfcf;
+            --paper: #ffffff;
+            --soft: #f7f7f7;
+            --danger: #c0392b;
         }
 
-        * { box-sizing: border-box; }
+        *, *::before, *::after { box-sizing: border-box; }
 
-        html, body { min-height: 100%; }
+        html, body { height: 100%; }
 
         body {
             margin: 0;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 32px 18px;
-            font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            background: var(--paper);
             color: var(--ink);
-            background:
-                radial-gradient(1100px 620px at 12% -5%, #22346e 0%, transparent 58%),
-                radial-gradient(900px 520px at 102% 105%, #3a1f6e 0%, transparent 58%),
-                linear-gradient(165deg, #060a16 0%, #0b1229 55%, #080e20 100%);
-            -webkit-font-smoothing: antialiased;
-        }
-
-        .orb {
-            position: fixed;
-            border-radius: 50%;
-            filter: blur(90px);
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        .orb-1 { width: 440px; height: 440px; background: #4f46e5; top: -140px; left: -120px; opacity: .45; }
-        .orb-2 { width: 400px; height: 400px; background: #06b6d4; bottom: -160px; right: -110px; opacity: .30; }
-        .orb-3 { width: 320px; height: 320px; background: #a855f7; top: 42%; right: 18%; opacity: .22; }
-
-        .auth-shell {
-            position: relative;
-            z-index: 1;
-            width: 100%;
-            max-width: 452px;
-        }
-
-        .auth-card {
-            position: relative;
-            background: #ffffff;
-            border-radius: 26px;
-            padding: 38px 34px 30px;
-            box-shadow:
-                0 44px 120px -32px rgba(2, 6, 23, .85),
-                0 0 0 1px rgba(255, 255, 255, .07);
-            overflow: hidden;
-            animation: card-in .45s cubic-bezier(.2, .7, .3, 1) both;
-        }
-
-        @keyframes card-in {
-            from { opacity: 0; transform: translateY(14px) scale(.985); }
-            to { opacity: 1; transform: none; }
-        }
-
-        .auth-card::before {
-            content: "";
-            position: absolute;
-            inset: 0 0 auto 0;
-            height: 5px;
-            background: linear-gradient(90deg, var(--brand-1), var(--brand-2), var(--brand-3));
-        }
-
-        .auth-brand {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            margin-bottom: 26px;
-        }
-
-        .auth-brand__left {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            min-width: 0;
-        }
-
-        .auth-logo {
-            width: 46px;
-            height: 46px;
-            border-radius: 14px;
-            object-fit: contain;
-            background: var(--field);
-            border: 1px solid var(--line);
-            padding: 6px;
-            flex: 0 0 auto;
-        }
-
-        .auth-brand__name {
-            display: block;
-            font-size: 15px;
-            font-weight: 700;
-            letter-spacing: -.2px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 190px;
-        }
-
-        .auth-brand__tag {
-            display: inline-block;
-            margin-top: 3px;
-            font-size: 10.5px;
-            font-weight: 700;
-            letter-spacing: .09em;
-            text-transform: uppercase;
-            color: var(--brand-1);
-            background: rgba(79, 70, 229, .10);
-            border: 1px solid rgba(79, 70, 229, .18);
-            border-radius: 999px;
-            padding: 3px 9px;
-        }
-
-        .auth-version {
-            flex: 0 0 auto;
-            font-size: 10.5px;
-            font-weight: 600;
-            color: var(--muted);
-            background: var(--field);
-            border: 1px solid var(--line);
-            border-radius: 999px;
-            padding: 5px 10px;
-            white-space: nowrap;
-        }
-
-        .auth-title {
-            margin: 0 0 6px;
-            font-size: 27px;
-            line-height: 1.15;
-            font-weight: 800;
-            letter-spacing: -.7px;
-        }
-
-        .auth-subtitle {
-            margin: 0 0 24px;
+            font-family: 'DM Sans', -apple-system, 'Segoe UI', Roboto, sans-serif;
             font-size: 14px;
             line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+        }
+
+        /* ── shell ─────────────────────────────────────────────── */
+
+        .shell {
+            display: grid;
+            grid-template-columns: 1.02fr 1fr;
+            min-height: 100vh;
+        }
+
+        /* ── left brand panel ──────────────────────────────────── */
+
+        .brand {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 44px 48px 40px;
+            background-color: #0e0e0e;
+            background-image:
+                linear-gradient(to right, rgba(255, 255, 255, .045) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, .045) 1px, transparent 1px);
+            background-size: 56px 56px;
+            background-position: -1px -1px;
+            color: #ffffff;
+            overflow: hidden;
+        }
+
+        .brand::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(120% 90% at 8% 0%, rgba(255, 255, 255, .07) 0%, transparent 62%);
+            pointer-events: none;
+        }
+
+        .brand__top {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand__logo {
+            width: 34px;
+            height: 34px;
+            border-radius: 9px;
+            object-fit: contain;
+            background: #ffffff;
+            padding: 5px;
+            flex: 0 0 auto;
+        }
+
+        .brand__name {
+            font-family: 'Manrope', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: -.1px;
+            max-width: 210px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .brand__chip {
+            margin-left: 2px;
+            padding: 3px 8px;
+            border: 1px solid rgba(255, 255, 255, .22);
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 500;
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, .68);
+        }
+
+        .brand__middle {
+            position: relative;
+            z-index: 1;
+            max-width: 460px;
+            padding: 40px 0;
+        }
+
+        .brand__headline {
+            margin: 0 0 16px;
+            font-family: 'Manrope', sans-serif;
+            font-size: 40px;
+            line-height: 1.08;
+            font-weight: 700;
+            letter-spacing: -1.4px;
+        }
+
+        .brand__headline span {
+            display: block;
+            color: rgba(255, 255, 255, .42);
+        }
+
+        .brand__text {
+            margin: 0;
+            max-width: 380px;
+            font-size: 13.5px;
+            line-height: 1.65;
+            color: rgba(255, 255, 255, .58);
+        }
+
+        .brand__rule {
+            position: relative;
+            z-index: 1;
+            height: 1px;
+            background: rgba(255, 255, 255, .14);
+            margin: 0 0 18px;
+        }
+
+        .brand__bottom {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 11.5px;
+            letter-spacing: .02em;
+            color: rgba(255, 255, 255, .42);
+        }
+
+        .brand__bottom .sep {
+            width: 3px;
+            height: 3px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, .28);
+        }
+
+        /* ── right form panel ──────────────────────────────────── */
+
+        .panel {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 40px 48px 32px;
+            background: var(--paper);
+        }
+
+        .panel__body {
+            width: 100%;
+            max-width: 372px;
+            margin: auto;
+            padding: 32px 0;
+        }
+
+        .eyebrow {
+            margin: 0 0 10px;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: .16em;
+            text-transform: uppercase;
+            color: var(--faint);
+        }
+
+        .title {
+            margin: 0 0 8px;
+            font-family: 'Manrope', sans-serif;
+            font-size: 28px;
+            line-height: 1.15;
+            font-weight: 700;
+            letter-spacing: -.8px;
+        }
+
+        .lead {
+            margin: 0 0 26px;
+            font-size: 13.5px;
             color: var(--muted);
         }
 
-        .auth-alert {
+        /* error */
+
+        .alert {
             display: flex;
             gap: 10px;
             align-items: flex-start;
-            margin-bottom: 20px;
+            margin: 0 0 22px;
             padding: 12px 14px;
-            border-radius: 13px;
-            background: #fef2f2;
-            border: 1px solid #fecaca;
-            color: #991b1b;
-            font-size: 13px;
-            line-height: 1.5;
+            background: #fdf6f5;
+            border: 1px solid #f3d9d5;
+            border-left: 2px solid var(--danger);
+            border-radius: 8px;
+            font-size: 12.5px;
+            line-height: 1.55;
+            color: #8c2f23;
         }
 
-        .auth-alert ul { margin: 0; padding-left: 16px; }
-        .auth-alert li + li { margin-top: 4px; }
+        .alert svg { flex: 0 0 auto; margin-top: 1px; }
+        .alert ul { margin: 0; padding-left: 15px; }
+        .alert li + li { margin-top: 3px; }
+
+        /* fields */
 
         .field { margin-bottom: 18px; }
 
-        .field__label {
-            display: block;
+        .field__head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
             margin-bottom: 7px;
-            font-size: 12.5px;
-            font-weight: 600;
-            letter-spacing: .02em;
-            color: #334155;
         }
 
-        .field__control { position: relative; }
+        .field__label {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: .01em;
+            color: var(--ink-soft);
+        }
 
-        .field__control input {
-            width: 100%;
-            height: 54px;
-            padding: 0 48px 0 46px;
+        .field__hint {
+            border: 0;
+            padding: 0;
+            background: none;
             font-family: inherit;
-            font-size: 15px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted);
+            cursor: pointer;
+            text-decoration: none;
+            border-bottom: 1px solid transparent;
+            transition: color .15s ease, border-color .15s ease;
+        }
+
+        .field__hint:hover { color: var(--ink); border-color: var(--line-strong); }
+
+        .field__input {
+            display: block;
+            width: 100%;
+            height: 48px;
+            padding: 0 14px;
+            font-family: inherit;
+            font-size: 14px;
             font-weight: 500;
             color: var(--ink);
-            background: var(--field);
-            border: 1.5px solid var(--line);
-            border-radius: 14px;
+            background: var(--paper);
+            border: 1px solid var(--line);
+            border-radius: 10px;
             outline: none;
-            transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+            transition: border-color .15s ease, box-shadow .15s ease;
         }
 
-        .field__control input::placeholder { color: #a3aec3; font-weight: 400; }
+        .field__input::placeholder { color: #b0b0b0; font-weight: 400; }
 
-        .field__control input:focus {
-            background: #ffffff;
-            border-color: var(--brand-1);
-            box-shadow: 0 0 0 4px rgba(79, 70, 229, .14);
+        .field__input:hover { border-color: var(--line-strong); }
+
+        .field__input:focus {
+            border-color: var(--ink);
+            box-shadow: 0 0 0 3px rgba(17, 17, 17, .07);
         }
 
-        .field__icon {
-            position: absolute;
-            top: 50%;
-            left: 15px;
-            transform: translateY(-50%);
-            width: 20px;
-            height: 20px;
-            color: #94a3b8;
-            pointer-events: none;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        .field__input:-webkit-autofill,
+        .field__input:-webkit-autofill:hover,
+        .field__input:-webkit-autofill:focus {
+            -webkit-text-fill-color: var(--ink);
+            -webkit-box-shadow: 0 0 0 1000px #ffffff inset;
+            transition: background-color 9999s ease-in-out 0s;
         }
 
-        .field__icon svg { width: 19px; height: 19px; }
+        /* remember */
 
-        .field__toggle {
-            position: absolute;
-            top: 50%;
-            right: 8px;
-            transform: translateY(-50%);
-            width: 38px;
-            height: 38px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: 0;
-            border-radius: 11px;
-            background: transparent;
-            color: #94a3b8;
-            cursor: pointer;
-            transition: background-color .15s ease, color .15s ease;
-        }
-
-        .field__toggle:hover { background: #eef2fa; color: var(--brand-1); }
-        .field__toggle svg { width: 19px; height: 19px; }
-
-        .auth-row {
+        .row-between {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 12px;
-            margin: 2px 0 22px;
+            gap: 14px;
+            margin: 4px 0 24px;
         }
 
         .check {
             display: inline-flex;
             align-items: center;
             gap: 9px;
-            font-size: 13.5px;
-            font-weight: 500;
-            color: #475569;
+            font-size: 13px;
+            color: var(--ink-soft);
             cursor: pointer;
             user-select: none;
         }
 
         .check input {
-            appearance: none;
-            -webkit-appearance: none;
-            width: 18px;
-            height: 18px;
+            width: 16px;
+            height: 16px;
             margin: 0;
-            border: 1.5px solid #cbd5e1;
-            border-radius: 5px;
-            background: #ffffff;
+            accent-color: var(--ink);
             cursor: pointer;
-            position: relative;
-            transition: border-color .15s ease, background-color .15s ease;
         }
 
-        .check input:checked {
-            background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
-            border-color: transparent;
-        }
+        /* submit */
 
-        .check input:checked::after {
-            content: "";
-            position: absolute;
-            left: 5px;
-            top: 1.5px;
-            width: 5px;
-            height: 10px;
-            border: solid #ffffff;
-            border-width: 0 2px 2px 0;
-            transform: rotate(43deg);
-        }
-
-        .check input:focus-visible { box-shadow: 0 0 0 3px rgba(79, 70, 229, .22); }
-
-        .btn-submit {
+        .submit {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
             width: 100%;
-            height: 54px;
-            border: 0;
-            border-radius: 14px;
+            height: 48px;
+            padding: 0 16px 0 18px;
+            border: 1px solid var(--ink);
+            border-radius: 10px;
+            background: var(--ink);
+            color: #ffffff;
             font-family: inherit;
-            font-size: 15px;
+            font-size: 13.5px;
             font-weight: 700;
             letter-spacing: .01em;
-            color: #ffffff;
             cursor: pointer;
-            background: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 100%);
-            box-shadow: 0 16px 34px -14px rgba(79, 70, 229, .85);
-            transition: transform .12s ease, box-shadow .15s ease, filter .15s ease;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
+            transition: background-color .15s ease, border-color .15s ease, opacity .15s ease;
         }
 
-        .btn-submit svg { width: 18px; height: 18px; }
+        .submit svg {
+            transition: transform .18s cubic-bezier(.2, .7, .3, 1);
+        }
 
-        .btn-submit:hover { transform: translateY(-1px); box-shadow: 0 20px 40px -14px rgba(79, 70, 229, .95); }
-        .btn-submit:active { transform: translateY(0); filter: brightness(.97); }
-        .btn-submit:disabled { opacity: .7; cursor: not-allowed; transform: none; }
+        .submit:hover { background: #000000; }
+        .submit:hover svg { transform: translateX(3px); }
+        .submit:active { transform: translateY(.5px); }
+        .submit:disabled { opacity: .55; cursor: progress; }
 
-        .auth-demo {
-            margin-top: 20px;
+        .submit:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(17, 17, 17, .18);
+        }
+
+        /* demo credentials */
+
+        .demo {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-top: 18px;
+            padding: 11px 13px;
+            border: 1px dashed var(--line-strong);
+            border-radius: 9px;
+            background: var(--soft);
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--ink-soft);
+        }
+
+        .demo strong { font-weight: 700; }
+
+        .demo button {
+            margin-left: auto;
+            border: 1px solid var(--line-strong);
+            border-radius: 7px;
+            background: #ffffff;
+            color: var(--ink);
+            font-family: inherit;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 9px;
+            cursor: pointer;
+            flex: 0 0 auto;
+            transition: background-color .15s ease, border-color .15s ease;
+        }
+
+        .demo button:hover { background: var(--soft); border-color: var(--ink); }
+
+        .help {
+            margin: 22px 0 0;
+            font-size: 12px;
+            color: var(--faint);
+        }
+
+        .help a { color: var(--ink-soft); text-decoration: none; border-bottom: 1px solid var(--line-strong); }
+
+        /* footer */
+
+        .panel__foot {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 12px 14px;
-            border-radius: 13px;
-            background: linear-gradient(135deg, rgba(79, 70, 229, .08), rgba(6, 182, 212, .08));
-            border: 1px dashed rgba(79, 70, 229, .35);
-            font-size: 12.5px;
-            color: #3730a3;
-        }
-
-        .auth-demo button {
-            flex: 0 0 auto;
-            width: 34px;
-            height: 34px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border: 1px solid rgba(79, 70, 229, .3);
-            border-radius: 10px;
-            background: #ffffff;
-            color: var(--brand-1);
-            cursor: pointer;
-        }
-
-        .auth-demo button svg { width: 16px; height: 16px; }
-        .auth-demo div { line-height: 1.5; }
-        .auth-demo strong { font-weight: 700; }
-
-        .auth-foot {
-            margin-top: 26px;
+            justify-content: space-between;
+            gap: 16px;
             padding-top: 18px;
             border-top: 1px solid var(--line);
-            display: flex;
+            font-size: 11.5px;
+            color: var(--faint);
+        }
+
+        .panel__foot span:last-child {
+            display: inline-flex;
             align-items: center;
-            justify-content: center;
             gap: 6px;
-            font-size: 11.5px;
-            color: #94a3b8;
-            text-align: center;
         }
 
-        .auth-note {
-            margin: 18px 0 0;
-            text-align: center;
-            font-size: 11.5px;
-            color: rgba(226, 232, 240, .55);
-            letter-spacing: .01em;
+        /* ── responsive ────────────────────────────────────────── */
+
+        @media (max-width: 980px) {
+            .shell { grid-template-columns: 1fr; }
+
+            .brand {
+                padding: 20px 24px;
+                background-size: 40px 40px;
+            }
+
+            .brand__middle, .brand__rule, .brand__bottom { display: none; }
+
+            .panel { padding: 32px 24px 24px; }
+            .panel__body { padding: 12px 0 28px; max-width: 420px; }
+            .title { font-size: 25px; }
         }
 
-        @media (max-width: 480px) {
-            body { padding: 18px 12px; }
-            .auth-card { padding: 30px 22px 24px; border-radius: 22px; }
-            .auth-title { font-size: 23px; }
-            .auth-brand__name { max-width: 140px; }
+        @media (max-width: 420px) {
+            .panel { padding: 24px 18px 18px; }
+            .panel__foot { flex-direction: column; align-items: flex-start; gap: 6px; }
         }
 
         @media (prefers-reduced-motion: reduce) {
-            .auth-card { animation: none; }
+            * { transition: none !important; }
         }
     </style>
 </head>
 
 <body>
-<span class="orb orb-1" aria-hidden="true"></span>
-<span class="orb orb-2" aria-hidden="true"></span>
-<span class="orb orb-3" aria-hidden="true"></span>
+<div class="shell">
 
-<main class="auth-shell">
-    <section class="auth-card">
-        <div class="auth-brand">
-            <div class="auth-brand__left">
-                <img class="auth-logo" src="{{ $logo }}" alt="{{ translate('logo') }}"/>
-                <div>
-                    <span class="auth-brand__name">{{ $businessName ?: translate('admin_panel') }}</span>
-                    <span class="auth-brand__tag">{{ translate('admin') }}</span>
-                </div>
-            </div>
-            @if (!empty($softwareVersion))
-                <span class="auth-version">{{ translate('Software_Version') }} {{ $softwareVersion }}</span>
-            @endif
+    {{-- ── brand panel ─────────────────────────────────────────── --}}
+    <aside class="brand">
+        <div class="brand__top">
+            <img class="brand__logo" src="{{ $logo }}" alt="{{ translate('logo') }}"/>
+            <span class="brand__name">{{ $brandName }}</span>
+            <span class="brand__chip">{{ translate('admin') }}</span>
         </div>
 
-        <h1 class="auth-title">{{ translate('admin_Sign_In') }}</h1>
-        <p class="auth-subtitle">{{ translate('sign_in_to_stay_connected') }}</p>
+        <div class="brand__middle">
+            <h1 class="brand__headline">
+                {{ translate('everything_your_team_runs_on') }}
+                <span>{{ translate('one_console') }}</span>
+            </h1>
+            <p class="brand__text">{{ translate('login_brand_text') }}</p>
+        </div>
 
-        @if (isset($errors) && $errors->any())
-            <div class="auth-alert" role="alert">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"
-                     style="flex:0 0 auto;margin-top:1px">
-                    <circle cx="12" cy="12" r="9"/>
-                    <path d="M12 8v4.5" stroke-linecap="round"/>
-                    <circle cx="12" cy="16" r=".9" fill="currentColor" stroke="none"/>
-                </svg>
-                <ul>
-                    @foreach ($errors->all() as $error)
-                        <li>{{ $error }}</li>
-                    @endforeach
-                </ul>
+        <div>
+            <div class="brand__rule"></div>
+            <div class="brand__bottom">
+                @if (!empty($softwareVersion))
+                    <span>{{ translate('Software_Version') }} {{ $softwareVersion }}</span>
+                    <span class="sep"></span>
+                @endif
+                <span>{{ translate('admin_console') }}</span>
             </div>
-        @endif
+        </div>
+    </aside>
 
-        <form action="{{ route('admin.auth.login') }}" method="POST" id="login-form" autocomplete="on">
-            @csrf
+    {{-- ── form panel ──────────────────────────────────────────── --}}
+    <main class="panel">
+        <div class="panel__body">
+            <p class="eyebrow">{{ translate('admin_access') }}</p>
+            <h2 class="title">{{ translate('admin_Sign_In') }}</h2>
+            <p class="lead">{{ translate('sign_in_to_stay_connected') }}</p>
 
-            <div class="field">
-                <label class="field__label" for="email">{{ translate('email') }}</label>
-                <div class="field__control">
-                    <span class="field__icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-                            <rect x="3" y="5" width="18" height="14" rx="3"/>
-                            <path d="m4.5 7.5 6.4 4.6a2 2 0 0 0 2.2 0l6.4-4.6" stroke-linecap="round"/>
-                        </svg>
-                    </span>
-                    <input type="text" name="email_or_phone" id="email" required
+            @if (isset($errors) && $errors->any())
+                <div class="alert" role="alert">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                         stroke-width="1.9" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9"/>
+                        <path d="M12 7.8v5" stroke-linecap="round"/>
+                        <circle cx="12" cy="16.2" r=".95" fill="currentColor" stroke="none"/>
+                    </svg>
+                    <ul>
+                        @foreach ($errors->all() as $error)
+                            <li>{{ $error }}</li>
+                        @endforeach
+                    </ul>
+                </div>
+            @endif
+
+            <form action="{{ route('admin.auth.login') }}" method="POST" id="login-form" autocomplete="on">
+                @csrf
+
+                <div class="field">
+                    <div class="field__head">
+                        <label class="field__label" for="email">{{ translate('email_or_phone') }}</label>
+                    </div>
+                    <input class="field__input" type="text" name="email_or_phone" id="email" required
                            value="{{ request()->cookie('remember_email') }}"
                            placeholder="{{ translate('example@gmail.com') }}"
-                           autocomplete="username" spellcheck="false"/>
+                           autocomplete="username" spellcheck="false" autocapitalize="off"/>
                 </div>
-            </div>
 
-            <div class="field">
-                <label class="field__label" for="password">{{ translate('password') }}</label>
-                <div class="field__control">
-                    <span class="field__icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-                            <rect x="4" y="10" width="16" height="10" rx="3"/>
-                            <path d="M8 10V7.5a4 4 0 0 1 8 0V10" stroke-linecap="round"/>
-                            <circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/>
-                        </svg>
-                    </span>
-                    <input type="password" name="password" id="password" required
-                           value="{{ request()->cookie('remember_password') }}"
-                           placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
-                           autocomplete="current-password"/>
-                    <button type="button" class="field__toggle" id="togglePassword"
-                            aria-label="{{ translate('show_password') }}" aria-pressed="false">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" id="eyeOpen">
-                            <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/>
-                            <circle cx="12" cy="12" r="3.2"/>
-                        </svg>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" id="eyeClosed"
-                             style="display:none">
-                            <path d="M3 3l18 18" stroke-linecap="round"/>
-                            <path d="M10.6 6.1A9.9 9.9 0 0 1 12 6c6 0 9.5 6 9.5 6a17.6 17.6 0 0 1-3.2 3.9M6.2 7.9A17.2 17.2 0 0 0 2.5 12S6 18 12 18a9.7 9.7 0 0 0 3.6-.7"/>
-                            <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
-                        </svg>
-                    </button>
-                </div>
-            </div>
-
-            <div class="auth-row">
-                <label class="check" for="rememberMeCheckbox">
-                    <input type="checkbox" name="remember" value="1" id="rememberMeCheckbox"
-                        {{ request()->cookie('remember_checked') ? 'checked' : '' }}>
-                    <span>{{ translate('Remember me?') }}</span>
-                </label>
-            </div>
-
-            @if($recaptchaEnabled)
-                <input type="hidden" name="g-recaptcha-response" id="g-recaptcha-response">
-            @endif
-
-            <button class="btn-submit" id="signInBtn" type="submit">
-                {{ translate('sign_in') }}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M5 12h13M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </button>
-
-            @if(config('app.env') == 'demo')
-                <div class="auth-demo">
-                    <button type="button" class="login-copy" aria-label="{{ translate('copy') }}">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <rect x="9" y="9" width="11" height="11" rx="2.5"/>
-                            <path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6.5A2.5 2.5 0 0 0 4 5.5v6A2.5 2.5 0 0 0 6.5 14"
-                                  stroke-linecap="round"/>
-                        </svg>
-                    </button>
-                    <div>
-                        <strong>{{ translate('email') }}:</strong> admin@admin.com<br>
-                        <strong>{{ translate('password') }}:</strong> 12345678
+                <div class="field">
+                    <div class="field__head">
+                        <label class="field__label" for="password">{{ translate('password') }}</label>
+                        <button type="button" class="field__hint" id="togglePassword" aria-pressed="false">
+                            {{ translate('show') }}
+                        </button>
                     </div>
+                    <input class="field__input" type="password" name="password" id="password" required
+                           value="{{ request()->cookie('remember_password') }}"
+                           placeholder="••••••••"
+                           autocomplete="current-password"/>
                 </div>
-            @endif
-        </form>
 
-        <div class="auth-foot">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14">
-                <path d="M12 3l7 3v5.5c0 4.3-2.9 7.6-7 9.5-4.1-1.9-7-5.2-7-9.5V6l7-3Z" stroke-linejoin="round"/>
-                <path d="m9.2 12 2 2 3.6-3.8" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            <span>{{ translate('secure_admin_access') }}</span>
+                <div class="row-between">
+                    <label class="check" for="rememberMeCheckbox">
+                        <input type="checkbox" name="remember" value="1" id="rememberMeCheckbox"
+                            {{ request()->cookie('remember_checked') ? 'checked' : '' }}>
+                        <span>{{ translate('Remember me?') }}</span>
+                    </label>
+                </div>
+
+                @if($recaptchaEnabled)
+                    <input type="hidden" name="g-recaptcha-response" id="g-recaptcha-response">
+                @endif
+
+                <button class="submit" id="signInBtn" type="submit">
+                    <span>{{ translate('sign_in') }}</span>
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
+                         stroke-width="2" aria-hidden="true">
+                        <path d="M4.5 12h14M12.5 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+
+                @if(config('app.env') == 'demo')
+                    <div class="demo">
+                        <div>
+                            <strong>{{ translate('email') }}</strong> admin@admin.com<br>
+                            <strong>{{ translate('password') }}</strong> 12345678
+                        </div>
+                        <button type="button" class="login-copy">{{ translate('copy') }}</button>
+                    </div>
+                @endif
+            </form>
+
+            <p class="help">{{ translate('login_help_text') }}</p>
         </div>
-    </section>
 
-    <p class="auth-note">&copy; {{ date('Y') }} {{ $businessName ?: translate('admin_panel') }} &middot; {{ translate('all_rights_reserved') }}</p>
-</main>
+        <footer class="panel__foot">
+            <span>&copy; {{ date('Y') }} {{ $brandName }}</span>
+            <span>
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
+                     stroke-width="2" aria-hidden="true">
+                    <path d="M12 3l7 3v5.6c0 4.3-2.9 7.6-7 9.4-4.1-1.8-7-5.1-7-9.4V6l7-3Z" stroke-linejoin="round"/>
+                </svg>
+                {{ translate('secure_admin_access') }}
+            </span>
+        </footer>
+    </main>
+
+</div>
 
 <script src="{{ asset('public/assets/admin-module') }}/js/jquery-3.6.0.min.js"></script>
 <script src="{{ asset('public/assets/admin-module') }}/js/toastr.js"></script>
@@ -614,16 +663,15 @@
     (function () {
         var toggle = document.getElementById('togglePassword');
         var password = document.getElementById('password');
-        var eyeOpen = document.getElementById('eyeOpen');
-        var eyeClosed = document.getElementById('eyeClosed');
+        var showLabel = '{{ translate('show') }}';
+        var hideLabel = '{{ translate('hide') }}';
 
         if (toggle && password) {
             toggle.addEventListener('click', function () {
                 var visible = password.type === 'text';
                 password.type = visible ? 'password' : 'text';
+                toggle.textContent = visible ? showLabel : hideLabel;
                 toggle.setAttribute('aria-pressed', String(!visible));
-                if (eyeOpen) eyeOpen.style.display = visible ? '' : 'none';
-                if (eyeClosed) eyeClosed.style.display = visible ? 'none' : '';
             });
         }
 

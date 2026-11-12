@@ -6288,4 +6288,15 @@ _Message' => 'Customer notification for provider bid offer
   'Tracking' => 'Tracking',
   'No_Location_Data' => 'No Location Data',
   'payment_method_not_allowed_for_provider' => 'Selected payment method is not available for this provider.',
+
+  // Admin login page (split layout)
+  'everything_your_team_runs_on' => 'Everything your team runs on',
+  'one_console' => 'in one console.',
+  'login_brand_text' => 'Bookings, providers, payments and payouts — one workspace for the people who keep the day moving.',
+  'admin_console' => 'Admin console',
+  'admin_access' => 'Admin access',
+  'login_help_text' => 'Trouble signing in? Contact your workspace owner.',
+  'secure_admin_access' => 'Secure admin access',
+  'email_or_phone' => 'Email or phone',
+  'show' => 'Show',
 );
