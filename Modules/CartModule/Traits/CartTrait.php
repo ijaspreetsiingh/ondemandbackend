@@ -5,6 +5,7 @@ namespace Modules\CartModule\Traits;
 use Illuminate\Support\Carbon;
 use Modules\BookingModule\Entities\Booking;
 use Modules\CartModule\Entities\Cart;
+use Modules\PromotionManagement\Entities\Coupon;
 use Modules\ServiceManagement\Entities\Service;
 use Modules\UserManagement\Entities\User;
 
@@ -34,13 +35,38 @@ trait CartTrait
         $basicDiscount = $basicDiscount > $campaignDiscount ? $basicDiscount : 0;
         $campaignDiscount = $campaignDiscount >= $basicDiscount ? $campaignDiscount : 0;
 
+        $previousCouponId = $cart->coupon_id;
+        $previousCouponCode = $cart->coupon_code;
+
         $cart->quantity = $quantity;
         $cart->discount_amount = $basicDiscount;
         $cart->campaign_discount = $campaignDiscount;
         $cart->coupon_discount = 0;
         $cart->coupon_code = null;
+        $cart->coupon_id = 0;
         $cart->tax_amount = round($tax, 2);
         $cart->total_cost = round($subtotal - $basicDiscount - $campaignDiscount + $tax, 2);
+
+        // Quantity badalne par coupon chup-chaap delete ho jata tha — isliye
+        // user ko lagta tha "coupon kaam nahi karta". Ab dobara calculate hota hai.
+        if (!empty($previousCouponId) && !empty($previousCouponCode)) {
+            $coupon = Coupon::with('discount')->find($previousCouponId);
+
+            if ($coupon?->discount && discount_applies_to_provider($coupon->discount, $cart->provider_id)) {
+                $couponDiscount = booking_discount_calculator($coupon->discount, $subtotal - $applicableDiscount);
+
+                if ($couponDiscount > 0) {
+                    $couponTax = round((($subtotal - $applicableDiscount - $couponDiscount) * $effectiveTaxPercent) / 100, 2);
+
+                    $cart->coupon_discount = $couponDiscount;
+                    $cart->coupon_code = $previousCouponCode;
+                    $cart->coupon_id = $previousCouponId;
+                    $cart->tax_amount = $couponTax;
+                    $cart->total_cost = round($subtotal - $applicableDiscount - $couponDiscount + $couponTax, 2);
+                }
+            }
+        }
+
         $cart->save();
 
         return true;

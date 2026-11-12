@@ -470,7 +470,11 @@ function booking_discount_calculator(mixed $keeper, $total_purchase_amount): flo
         if ($keeper->discount_amount_type == 'percent') {
             $amount = ($total_purchase_amount / 100) * $keeper->discount_amount;
 
-            if ($amount > $keeper->max_discount_amount) {
+            // max_discount_amount = 0 ka matlab "koi cap nahi". Pehle 0 hone par
+            // discount bhi 0 ho jata tha — user ko "coupon applied" dikhta tha
+            // par discount ₹0 milta tha.
+            if (!empty($keeper->max_discount_amount) && $keeper->max_discount_amount > 0
+                && $amount > $keeper->max_discount_amount) {
                 $amount = $keeper->max_discount_amount;
             }
 

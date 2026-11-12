@@ -90,7 +90,9 @@ class CouponController extends Controller
                 ->count();
 
             $coupon['used_count'] = $usedCount;
-            $coupon['remaining_uses'] = max(0, $coupon->discount->limit_per_user - $usedCount);
+            $coupon['remaining_uses'] = max(0, (int)($coupon->discount->limit_per_user ?? 0) - $usedCount);
+            // App builds `remaintng_uses` (typo) padhte hain — dono keys bhejo.
+            $coupon['remaintng_uses'] = $coupon['remaining_uses'];
         }
 
         $expiredCoupons = $this->coupon->with(['discount'])
@@ -106,7 +108,19 @@ class CouponController extends Controller
                 $query->where(['discount_type' => 'zone', 'type_wise_id' => config('zone_id')]);
             })->paginate($request['limit'], ['*'], 'offset', $request['offset'])->withPath('');
 
-        return response()->json(response_formatter(DEFAULT_200, ['active_coupons' => $activeCoupons, 'expired_coupons' => $expiredCoupons]), 200);
+        foreach ($expiredCoupons as $key => $coupon) {
+            $coupon['is_used'] = 0;
+            $coupon['remaining_uses'] = 0;
+            $coupon['remaintng_uses'] = 0;
+        }
+
+        return response()->json(response_formatter(DEFAULT_200, [
+            'active_coupons' => $activeCoupons,
+            'expired_coupons' => $expiredCoupons,
+            // Purane app builds isi (typo) key ko padhte hain. Ye key na hone par
+            // app ka coupon list parse hi nahi hota tha (spinner hamesha ghoomta tha).
+            'exptred_coupons' => $expiredCoupons,
+        ]), 200);
     }
 
     /**
@@ -269,14 +283,18 @@ class CouponController extends Controller
 
         $coupon = $couponQuery->latest()->first();
 
-        $discountedIds = [];
-        if (isset($coupon) && isset($coupon->discount) && $coupon->discount->discount_types->count() > 0) {
-            $discountedIds = $coupon->discount->discount_types->pluck('type_wise_id')->toArray();
-        }
-
         if (!isset($coupon)) {
             return response()->json(response_formatter(DEFAULT_404), 200);
         }
+
+        // Sirf category/service ids hi discount target hain. Pehle zone aur
+        // provider ids bhi isme aa jate the, jisse koi bhi cart item match nahi
+        // hota tha aur coupon "not valid for cart" bol deta tha.
+        $discountedIds = ($coupon->discount && $coupon->discount->discount_types->count() > 0)
+            ? $coupon->discount->discount_types
+                ->whereIn('discount_type', ['category', 'service'])
+                ->pluck('type_wise_id')->toArray()
+            : [];
 
         //coupon type check
         if ($coupon->coupon_type == 'first_booking') {
@@ -308,7 +326,7 @@ class CouponController extends Controller
 
         $totalUsedCount = $repeatCount;
 
-        if ($coupon->coupon_type != 'first_booking' && $totalUsedCount >= $coupon->discount->limit_per_user) {
+        if ($coupon->coupon_type != 'first_booking' && $totalUsedCount >= (int)($coupon->discount->limit_per_user ?? 0)) {
             return response()->json(response_formatter(COUPON_NOT_VALID_FOR_CART), 200);
         }
 
@@ -317,43 +335,92 @@ class CouponController extends Controller
                 ->where('customer_id', $this->customer_user_id)
                 ->where('booking_status', '!=', 'canceled')
                 ->count();
-            if ($limit >= $coupon->discount->limit_per_user) {
+            if ($limit >= (int)($coupon->discount->limit_per_user ?? 0)) {
                 return response()->json(response_formatter(COUPON_NOT_VALID_FOR_CART), 200);
             }
         }
 
+        // Minimum purchase cart ke TOTAL par check hota hai (per-item nahi).
+        $cartSubtotal = 0;
+        foreach ($cartItems as $item) {
+            $cartSubtotal += $item->service_cost * $item['quantity'];
+        }
+        $minPurchase = (float) ($coupon->discount->min_purchase ?? 0);
+        if ($minPurchase > 0 && round($cartSubtotal, 2) < $minPurchase) {
+            return response()->json([
+                'response_code' => 'coupon_not_valid_for_your_cart',
+                'message' => translate('This coupon needs a minimum order of') . ' ' . with_currency_symbol($minPurchase),
+                'content' => null,
+                'errors' => [],
+            ], 200);
+        }
+
+        // Purana coupon pehle hata do — coupon badalne par purana discount
+        // chipka nahi rehna chahiye. Base amounts dobara calculate hote hain.
+        foreach ($cartItems as $item) {
+            $service = $this->service->find($item['service_id']);
+            $subtotal = round($item->service_cost * $item['quantity'], 2);
+            $applicableDiscount = max((float) $item->discount_amount, (float) $item->campaign_discount);
+            $effectiveTaxPercent = providerEffectiveTaxPercent($item->provider, (float) ($service['tax'] ?? 0));
+            $tax = round((($subtotal - $applicableDiscount) * $effectiveTaxPercent) / 100, 2);
+
+            $item->coupon_discount = 0;
+            $item->coupon_code = null;
+            $item->coupon_id = 0;
+            $item->tax_amount = $tax;
+            $item->total_cost = round($subtotal - $applicableDiscount + $tax, 2);
+            $item->save();
+        }
+
         //apply
         $applied = 0;
+        $totalCouponDiscount = 0;
         foreach ($cartItems as $item) {
-            if (in_array($item->service_id, $discountedIds) || in_array($item->category_id, $discountedIds)) {
-                if (!discount_applies_to_provider($coupon->discount, $item->provider_id)) {
-                    continue;
-                }
-                $cartItem = $this->cart->where('id', $item['id'])->first();
-                $service = $this->service->find($cartItem['service_id']);
-
-                //calculation
-                $basicDiscount = $cartItem->discount_amount;
-                $campaignDiscount = $cartItem->campaign_discount;
-                $applicableDiscount = ($campaignDiscount >= $basicDiscount) ? $campaignDiscount : $basicDiscount;
-                $couponDiscountAmount = booking_discount_calculator($coupon->discount, (($cartItem->service_cost * $cartItem['quantity'])-($applicableDiscount)));
-                $subtotal = round($cartItem->service_cost * $cartItem['quantity'], 2);
-                $effectiveTaxPercent = providerEffectiveTaxPercent($cartItem->provider, (float) $service['tax']);
-                $tax = round((((($cartItem->service_cost *  $cartItem['quantity']) - $applicableDiscount - $couponDiscountAmount) * $effectiveTaxPercent) / 100) , 2);
-
-                //update carts table
-                $cartItem->coupon_discount = $couponDiscountAmount;
-                $cartItem->coupon_code = $coupon->coupon_code;
-                $cartItem->coupon_id = $coupon->id;
-                $cartItem->tax_amount = $tax;
-                $cartItem->total_cost = round($subtotal - $applicableDiscount - $couponDiscountAmount + $tax, 2);
-                $cartItem->save();
-                $applied = 1;
+            if (!in_array($item->service_id, $discountedIds) && !in_array($item->category_id, $discountedIds)) {
+                continue;
             }
+
+            if (!discount_applies_to_provider($coupon->discount, $item->provider_id)) {
+                continue;
+            }
+
+            $cartItem = $this->cart->where('id', $item['id'])->first();
+            if (!$cartItem) {
+                continue;
+            }
+
+            $service = $this->service->find($cartItem['service_id']);
+            $subtotal = round($cartItem->service_cost * $cartItem['quantity'], 2);
+            $applicableDiscount = max((float) $cartItem->discount_amount, (float) $cartItem->campaign_discount);
+            $couponDiscountAmount = booking_discount_calculator($coupon->discount, $subtotal - $applicableDiscount);
+
+            // Discount 0 bana (item-level min purchase poori nahi hui) to
+            // "applied" mat bolo — warna user ko "coupon applied" dikhta tha
+            // par discount ₹0 rehta tha.
+            if ($couponDiscountAmount <= 0) {
+                continue;
+            }
+
+            $effectiveTaxPercent = providerEffectiveTaxPercent($cartItem->provider, (float) ($service['tax'] ?? 0));
+            $tax = round((($subtotal - $applicableDiscount - $couponDiscountAmount) * $effectiveTaxPercent) / 100, 2);
+
+            //update carts table
+            $cartItem->coupon_discount = $couponDiscountAmount;
+            $cartItem->coupon_code = $coupon->coupon_code;
+            $cartItem->coupon_id = $coupon->id;
+            $cartItem->tax_amount = $tax;
+            $cartItem->total_cost = round($subtotal - $applicableDiscount - $couponDiscountAmount + $tax, 2);
+            $cartItem->save();
+
+            $applied = 1;
+            $totalCouponDiscount += $couponDiscountAmount;
         }
 
         if ($applied) {
-            return response()->json(response_formatter(COUPON_APPLIED_200), 200);
+            return response()->json(response_formatter(COUPON_APPLIED_200, [
+                'coupon_code' => $coupon->coupon_code,
+                'coupon_discount' => round($totalCouponDiscount, 2),
+            ]), 200);
         }
         return response()->json(response_formatter(COUPON_NOT_VALID_FOR_CART), 200);
 
@@ -367,8 +434,8 @@ class CouponController extends Controller
     public function removeCoupon(Request $request): JsonResponse
     {
         $cartItems = $this->cart->where('customer_id', $this->customer_user_id)->get();
-        if (!isset($cartItems)) {
-            return response()->json(response_formatter(DEFAULT_204), 204);
+        if ($cartItems->isEmpty()) {
+            return response()->json(response_formatter(DEFAULT_UPDATE_200), 200);
         }
 
         foreach ($cartItems as $cart) {
@@ -378,14 +445,15 @@ class CouponController extends Controller
             $campaignDiscount = $cart->campaign_discount;
             $subtotal = round($cart->service_cost * $cart['quantity'], 2);
             $applicableDiscount = ($campaignDiscount >= $basicDiscount) ? $campaignDiscount : $basicDiscount;
-            $effectiveTaxPercent = providerEffectiveTaxPercent($cart->provider, (float) $service['tax']);
-            $tax = round(((($cart->service_cost - $applicableDiscount) * $effectiveTaxPercent) / 100) * $cart['quantity'], 2);
+            $effectiveTaxPercent = providerEffectiveTaxPercent($cart->provider, (float) ($service['tax'] ?? 0));
+            $tax = round((($subtotal - $applicableDiscount) * $effectiveTaxPercent) / 100, 2);
 
             //updated values
             $cart->tax_amount = $tax;
             $cart->total_cost = round($subtotal - $applicableDiscount + $tax, 2);
             $cart->coupon_discount = 0;
             $cart->coupon_code = null;
+            $cart->coupon_id = 0;
             $cart->save();
         }
 

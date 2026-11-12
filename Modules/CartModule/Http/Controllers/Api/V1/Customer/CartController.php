@@ -189,7 +189,9 @@ class CartController extends Controller
                         return $repeatCount > 0 ? $repeatCount : 1;
                     });
                 $cartItem['used_count'] = $repeatCount;
-                $cartItem['remaining_uses'] = max(0, $coupon->discount->limit_per_user - $repeatCount);
+                $cartItem['remaining_uses'] = max(0, (int)($coupon?->discount?->limit_per_user ?? 0) - $repeatCount);
+                // App builds `remaintng_uses` (typo) padhte hain — dono bhejo.
+                $cartItem['remaintng_uses'] = $cartItem['remaining_uses'];
 
             }
             if ($cartItem?->provider) {
