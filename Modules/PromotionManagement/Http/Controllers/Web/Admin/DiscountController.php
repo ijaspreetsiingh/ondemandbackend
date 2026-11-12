@@ -165,13 +165,13 @@ class DiscountController extends Controller
         $this->authorize('discount_add');
         $request->validate([
             'discount_type' => 'required|in:category,service,zone,mixed',
-            'discount_amount' => 'required|numeric',
+            'discount_amount' => $request['discount_amount_type'] == 'percent' ? 'required|numeric|min:0|max:100' : 'required|numeric|min:0',
             'discount_title' => 'required|string',
             'discount_amount_type' => 'required|in:percent,amount',
             'min_purchase' => 'required|numeric|min:0',
-            'max_discount_amount' => $request['discount_amount_type'] == 'amount' ? '' : 'required' . '|numeric|min:0',
+            'max_discount_amount' => $request['discount_amount_type'] == 'amount' ? 'nullable' : 'nullable|numeric|min:0',
             'start_date' => 'required|date',
-            'end_date' => 'required|date',
+            'end_date' => 'required|date|after_or_equal:start_date',
             'category_ids' => 'array',
             'service_ids' => 'array',
             'zone_ids' => 'required|array',
@@ -179,6 +179,14 @@ class DiscountController extends Controller
         ]);
 
         $request->merge(['provider_ids' => promotion_resolve_provider_ids($request)]);
+
+        // 'all' / '0' jaisa junk id discount_types me save hone se rokta hai.
+        $request->merge([
+            'category_ids' => promotion_clean_ids($request->input('category_ids', [])),
+            'service_ids' => promotion_clean_ids($request->input('service_ids', [])),
+            'zone_ids' => promotion_clean_ids($request->input('zone_ids', [])),
+            'provider_ids' => promotion_clean_ids($request->input('provider_ids', [])),
+        ]);
 
         DB::transaction(function () use ($request) {
             $discount = $this->discount;
@@ -243,13 +251,13 @@ class DiscountController extends Controller
         $this->authorize('discount_update');
         $request->validate([
             'discount_type' => 'required|in:category,service,zone,mixed',
-            'discount_amount' => 'required|numeric',
+            'discount_amount' => $request['discount_amount_type'] == 'percent' ? 'required|numeric|min:0|max:100' : 'required|numeric|min:0',
             'discount_title' => 'required|string',
             'discount_amount_type' => 'required|in:percent,amount',
-            'min_purchase' => 'required|numeric',
-            'max_discount_amount' => $request['discount_amount_type'] == 'amount' ? '' : 'required' . '|numeric|min:0',
+            'min_purchase' => 'required|numeric|min:0',
+            'max_discount_amount' => $request['discount_amount_type'] == 'amount' ? 'nullable' : 'nullable|numeric|min:0',
             'start_date' => 'required|date',
-            'end_date' => 'required|date',
+            'end_date' => 'required|date|after_or_equal:start_date',
             'category_ids' => 'array',
             'service_ids' => 'array',
             'zone_ids' => 'required|array',
@@ -257,6 +265,13 @@ class DiscountController extends Controller
         ]);
 
         $request->merge(['provider_ids' => promotion_resolve_provider_ids($request)]);
+
+        $request->merge([
+            'category_ids' => promotion_clean_ids($request->input('category_ids', [])),
+            'service_ids' => promotion_clean_ids($request->input('service_ids', [])),
+            'zone_ids' => promotion_clean_ids($request->input('zone_ids', [])),
+            'provider_ids' => promotion_clean_ids($request->input('provider_ids', [])),
+        ]);
 
         $discount = $this->discountQuery->where(['id' => $id])->first();
         if (isset($discount)) {

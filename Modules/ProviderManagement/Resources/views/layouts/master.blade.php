@@ -664,53 +664,12 @@ $serviceLocations = getProviderSettings(providerId: auth()->user()->provider->id
 @endif
 
 <script>
-    // AJAX SPA Navigation
-    var isNavigating = false;
-    $(document).on('click', '.aside .nav a[href]', function(e) {
-        var $link = $(this);
-        var href = $link.attr('href');
-        if (!href || href === '#' || href === 'javascript:void(0)' || href.indexOf('javascript:') === 0) return;
-        if (e.ctrlKey || e.metaKey || e.shiftKey) return;
-        var $parent = $link.closest('li');
-        var hasSubItems = $parent.hasClass('has-sub-item');
-        var inSubmenu = $link.closest('.sub-menu').length > 0;
-        if (hasSubItems && !inSubmenu) return;
-        e.preventDefault();
-        if (isNavigating) return;
-        isNavigating = true;
-        var $content = $('#app-content');
-        $content.css('opacity', '0.5').css('transition', 'opacity 0.15s');
-        $.ajax({
-            url: href,
-            type: 'GET',
-            headers: { 'X-Requested-With': 'XMLHttpRequest' },
-            success: function(html) {
-                var parsed = $(html);
-                var newContent = parsed.find('#app-content').html() || parsed.filter('#app-content').html() || html;
-                var newTitle = parsed.filter('title').text() || document.title;
-                $content.html(newContent);
-                document.title = newTitle;
-                history.pushState({url: href}, '', href);
-                $content.css('opacity', '1');
-                isNavigating = false;
-                if (typeof $.fn.select2 !== 'undefined') {
-                    $('.js-select, .select2').select2();
-                }
-                $(document).trigger('ajaxContentLoaded');
-                $('.aside .nav a').removeClass('active-menu');
-                $link.addClass('active-menu');
-                if (typeof toastr !== 'undefined') {
-                    toastr.clear();
-                }
-            },
-            error: function() {
-                window.location.href = href;
-            }
-        });
-    });
-    $(window).on('popstate', function() {
-        window.location.reload();
-    });
+    // NOTE: Yahan pehle ek "AJAX SPA navigation" tha jo sidebar link par page
+    // ka content #app-content me swap kar deta tha — lekin page ke
+    // push('script') scripts (select2 init, radio toggles, provider cascade)
+    // kabhi re-run nahi hote the. Isi wajah se multi-select blocks native
+    // select multiple ki tarah atke reh jate the aur form submit nahi hota tha.
+    // Normal navigation par har page ka script chalta hai.
 </script>
 
 @stack('script')

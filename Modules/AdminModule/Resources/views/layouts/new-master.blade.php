@@ -132,8 +132,42 @@
 
 <script>
     "use strict";
+
+    /**
+     * Admin ke saare selects ke liye ek hi initializer.
+     * - .js-select      -> normal single select
+     * - multi selectors -> coupon / discount / campaign forms
+     * Agar element par pehle se select2 laga hua hai to dobara init nahi karta.
+     */
+    window.initAdminSelects = function (scope) {
+        if (typeof window.jQuery === 'undefined' || typeof $.fn.select2 === 'undefined') return;
+
+        var $root = scope ? $(scope) : $(document);
+
+        $root.find('.js-select').each(function () {
+            var $el = $(this);
+            if ($el.data('select2')) return;
+            $el.select2();
+        });
+
+        $root.find('.category-select, .service-select, .zone-select, .provider-select, .customer-select').each(function () {
+            var $el = $(this);
+            if ($el.data('select2')) return;
+            var placeholder = $el.attr('data-placeholder') || '';
+            $el.select2({
+                width: '100%',
+                closeOnSelect: false,
+                placeholder: placeholder
+            });
+        });
+    };
+
     $(document).ready(function () {
-        $('.js-select').select2();
+        // setTimeout(0) — page ke apne $(document).ready handlers pehle chal
+        // jayein, phir jo select bacha ho use init karein (double init nahi).
+        setTimeout(function () {
+            window.initAdminSelects();
+        }, 0);
     });
 
     @if ($errors->any())
@@ -663,56 +697,14 @@
     });
 
     // AJAX SPA Navigation
-    var isNavigating = false;
-    $(document).on('click', '.aside .nav a[href]', function(e) {
-        var $link = $(this);
-        var href = $link.attr('href');
-        if (!href || href === '#' || href === 'javascript:void(0)' || href.indexOf('javascript:') === 0) return;
-        if (e.ctrlKey || e.metaKey || e.shiftKey) return;
-        var $parent = $link.closest('li');
-        var hasSubItems = $parent.hasClass('has-sub-item');
-        var inSubmenu = $link.closest('.sub-menu').length > 0;
-        if (hasSubItems && !inSubmenu) return;
-        e.preventDefault();
-        if (isNavigating) return;
-        isNavigating = true;
-        var $content = $('#app-content');
-        $content.css('opacity', '0.5').css('transition', 'opacity 0.15s');
-        $.ajax({
-            url: href,
-            type: 'GET',
-            headers: { 'X-Requested-With': 'XMLHttpRequest' },
-            success: function(html) {
-                var parsed = $(html);
-                var newContent = parsed.find('#app-content').html() || parsed.filter('#app-content').html() || html;
-                var newTitle = parsed.filter('title').text() || document.title;
-                $content.html(newContent);
-                document.title = newTitle;
-                history.pushState({url: href}, '', href);
-                $content.css('opacity', '1');
-                isNavigating = false;
-                if (typeof $.fn.select2 !== 'undefined') {
-                    $('.js-select, .select2').select2();
-                }
-                $(document).trigger('ajaxContentLoaded');
-                $('.aside .nav a').removeClass('active-menu');
-                $link.addClass('active-menu');
-                if (typeof toastr !== 'undefined') {
-                    toastr.clear();
-                }
-            },
-            error: function() {
-                window.location.href = href;
-            }
-        });
-    });
-    $(window).on('popstate', function() {
-        window.location.reload();
-    });
-</script>
-
-
-
+    // NOTE: Yahan pehle ek "AJAX SPA navigation" tha jo sidebar link par page
+    // ka content #app-content me swap kar deta tha — lekin page ke
+    // push('script') scripts (select2 init, radio toggles, provider cascade,
+    // 166+ pages ka poora JS) kabhi re-run nahi hote the. Isi wajah se
+    // Coupon/Discount ke multi-select blocks native select multiple ki tarah
+    // 46px height par atke reh jate the (list dikhti hi nahi thi) aur form
+    // submit bhi nahi hota tha. Normal navigation par har page ka script
+    // chalta hai, isliye SPA nav hata diya gaya hai.
 </script>
 
 @stack('script')

@@ -44,8 +44,8 @@
                                     <div class="mb-30" id="category_selector">
                                         <label class="mb-2">{{ translate('Select Categories') }} *</label>
                                         <select class="category-select theme-input-style w-100" name="category_ids[]"
-                                                multiple="multiple" id="category_selector__select" required>
-                                            <option value="0" disabled>{{translate('Select Category')}}</option>
+                                                multiple="multiple" id="category_selector__select"
+                                                data-placeholder="{{ translate('Select Category') }}">
                                             <option value="all">{{translate('Select All')}}</option>
                                             @foreach($categories as $category)
                                                 <option value="{{$category->id}}">{{$category->name}}</option>
@@ -57,8 +57,8 @@
                                     <div class="mb-30 service_selector" id="service_selector" style="display: none;">
                                         <label class="mb-2">{{ translate('Select Services') }} *</label>
                                         <select class="service-select theme-input-style w-100" name="service_ids[]"
-                                                multiple="multiple" id="service_selector__select">
-                                            <option value="0" disabled>{{translate('Select Service')}}</option>
+                                                multiple="multiple" id="service_selector__select"
+                                                data-placeholder="{{ translate('Select Service') }}">
                                             <option value="all">{{translate('Select All')}}</option>
                                             @foreach($services as $service)
                                                 <option value="{{$service->id}}">{{$service->name}}</option>
@@ -74,8 +74,8 @@
                                     <h5 class="mb-3">{{ translate('Step 2: Select Zone') }}</h5>
                                     <label class="mb-2">{{ translate('Select Zones') }} *</label>
                                     <select class="zone-select theme-input-style w-100" name="zone_ids[]"
-                                            multiple="multiple" id="zone_selector__select" required>
-                                        <option value="0" disabled>{{translate('Select Zone')}}</option>
+                                            multiple="multiple" id="zone_selector__select"
+                                            data-placeholder="{{ translate('Select Zone') }}">
                                         <option value="all">{{translate('Select All')}}</option>
                                         @foreach($zones as $zone)
                                             <option value="{{$zone->id}}">{{$zone->name}}</option>
@@ -113,7 +113,7 @@
                                                 <div class="form-floating form-floating__icon">
                                                     <input type="number" class="form-control" name="discount_amount"
                                                            placeholder="{{translate('amount')}}" id="discount_amount"
-                                                           min="0" max="100" step="any" value="0" required>
+                                                           min="0.01" max="100" step="any" required>
                                                     <label id="discount_amount__label">{{translate('amount')}} (%) *</label>
                                                     <span class="material-icons">price_change</span>
                                                 </div>
@@ -153,10 +153,11 @@
                                                     <input type="number" class="form-control" step="any"
                                                            name="max_discount_amount"
                                                            placeholder="{{translate('max_discount')}} ({{currency_symbol()}}) *"
-                                                           min="0.01" value="0" required>
+                                                           min="0" value="0">
                                                     <label>{{translate('max_discount')}} ({{currency_symbol()}}) *</label>
                                                     <span class="material-icons">price_change</span>
                                                 </div>
+                                                <small class="text-muted d-block mt-1">{{ translate('Keep 0 for no limit') }}</small>
                                             </div>
                                         </div>
                                     </div>
@@ -177,56 +178,101 @@
 
 @push('script')
     <script>
-        "use Strict";
+        "use strict";
 
-        // "Select All" expansion for category / service / zone
-        $('#category_selector__select, #service_selector__select, #zone_selector__select').on('change', function () {
-            var selectedValues = $(this).val();
-            if (selectedValues !== null && selectedValues.includes('all')) {
-                $(this).find('option').not(':disabled').prop('selected', 'selected');
-                $(this).find('option[value="all"]').prop('selected', false);
-                $(this).trigger('change');
+        (function () {
+            var $category = $('#category_selector__select');
+            var $service = $('#service_selector__select');
+            var $zone = $('#zone_selector__select');
+
+            function initSelect($el, placeholder) {
+                if (!$el.length || typeof $.fn.select2 === 'undefined') return;
+                if ($el.data('select2')) return;
+                $el.select2({
+                    width: '100%',
+                    closeOnSelect: false,
+                    placeholder: placeholder || $el.attr('data-placeholder') || ''
+                });
             }
-        });
 
-        // Toggle between category and service selector
-        $('input[name="discount_type"]').on('change', function () {
-            if ($(this).val() === 'category') {
-                $('#category_selector').show();
-                $('#service_selector').hide();
-                $('#service_selector__select').prop('required', false);
-                $('#category_selector__select').prop('required', true);
-            } else {
-                $('#category_selector').hide();
-                $('#service_selector').show();
-                $('#category_selector__select').prop('required', false);
-                $('#service_selector__select').prop('required', true);
+            // width: '100%' zaroori hai â€” hidden div ke andar select2 default
+            // width 0 le leta hai (service select invisible ho jata tha).
+            initSelect($category, "{{ translate('Select Category') }}");
+            initSelect($service, "{{ translate('Select Service') }}");
+            initSelect($zone, "{{ translate('Select Zone') }}");
+
+            // "Select All" ke baad select2 ka UI refresh hona chahiye, warna
+            // user ko lagta hai ki kuch select hua hi nahi.
+            $('#category_selector__select, #service_selector__select, #zone_selector__select').on('change', function () {
+                var $el = $(this);
+                var values = $el.val() || [];
+
+                if (values.indexOf('all') === -1) return;
+
+                $el.find('option').each(function () {
+                    var $option = $(this);
+                    if ($option.val() === 'all' || $option.prop('disabled')) return;
+                    $option.prop('selected', true);
+                });
+                $el.find('option[value="all"]').prop('selected', false);
+                // plain change -> select2 UI refresh + provider cascade reload
+                $el.trigger('change');
+            });
+
+            function toggleDiscountType() {
+                var type = $('input[name="discount_type"]:checked').val() || 'category';
+                $('#category_selector').toggle(type === 'category' || type === 'mixed');
+                $('#service_selector').toggle(type === 'service' || type === 'mixed');
             }
-        });
 
-        // Discount amount type toggle
-        $('input[name="discount_amount_type"]').on('change', function () {
-            const label = $('#discount_amount__label');
-            if ($(this).val() === 'percent') {
-                label.text('{{ translate("amount") }} (%) *');
-                $('#discount_amount').attr('max', '100');
-                $('[name="max_discount_amount"]').attr('required', true);
-            } else {
-                label.text('{{ translate("amount") }} ({{ currency_symbol() }}) *');
-                $('#discount_amount').removeAttr('max');
-                $('[name="max_discount_amount"]').removeAttr('required');
+            $('input[name="discount_type"]').on('change', toggleDiscountType);
+            toggleDiscountType();
+
+            function toggleAmountType() {
+                var type = $('input[name="discount_amount_type"]:checked').val() || 'percent';
+                if (type === 'percent') {
+                    $('#max_discount_amount').show();
+                    $('#discount_amount').attr('max', 100);
+                    $('#discount_amount__label').html("{{ translate('amount') }} (%) *");
+                } else {
+                    $('#max_discount_amount').hide();
+                    $('#discount_amount').removeAttr('max');
+                    $('#discount_amount__label').html("{{ translate('amount') }} ({{ currency_symbol() }}) *");
+                }
             }
-        });
 
-        //Select 2
-        $(".category-select").select2({
-            placeholder: "{{translate('Select Category')}}",
-        });
-        $(".service-select").select2({
-            placeholder: "{{translate('Select Service')}}",
-        });
-        $(".zone-select").select2({
-            placeholder: "{{translate('Select Zone')}}",
-        });
+            $('input[name="discount_amount_type"]').on('change', toggleAmountType);
+            toggleAmountType();
+
+            // HTML5 "required" select2 ke chhupe hue select par silently fail
+            // ho jata hai (form submit hi nahi hota, koi error bhi nahi dikhta).
+            $('.main-content form').on('submit', function (e) {
+                function fail(message, $select) {
+                    e.preventDefault();
+                    if (typeof toastr !== 'undefined') {
+                        toastr.error(message);
+                    } else {
+                        alert(message);
+                    }
+                    if ($select && $select.length && $select.data('select2')) {
+                        $select.select2('open');
+                    }
+                    return false;
+                }
+
+                var discountType = $('input[name="discount_type"]:checked').val() || 'category';
+
+                if (($zone.val() || []).length === 0) {
+                    return fail({!! json_encode(translate('Select at least one zone')) !!}, $zone);
+                }
+                if ((discountType === 'category' || discountType === 'mixed') && ($category.val() || []).length === 0) {
+                    return fail({!! json_encode(translate('Select at least one category')) !!}, $category);
+                }
+                if ((discountType === 'service' || discountType === 'mixed') && ($service.val() || []).length === 0) {
+                    return fail({!! json_encode(translate('Select at least one service')) !!}, $service);
+                }
+                return true;
+            });
+        })();
     </script>
 @endpush

@@ -328,6 +328,24 @@ if (!function_exists('discount_applies_to_provider')) {
     }
 }
 
+if (!function_exists('promotion_clean_ids')) {
+    /**
+     * Form se aane wale ids se 'all' / '0' / '' hata do. Warna
+     * discount_types table me type_wise_id = 'all' jaisa junk save ho jata hai
+     * aur promotion kisi bhi item par apply nahi hoti.
+     *
+     * @param mixed $ids
+     * @return array
+     */
+    function promotion_clean_ids(mixed $ids): array
+    {
+        return array_values(array_unique(array_filter(
+            (array)$ids,
+            fn($id) => !is_null($id) && $id !== '' && $id !== 'all' && $id !== '0' && $id !== 0
+        )));
+    }
+}
+
 if (!function_exists('promotion_filtered_provider_ids')) {
     /**
      * Cascade filter: providers in selected zones that offer the selected

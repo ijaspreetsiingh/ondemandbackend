@@ -375,8 +375,12 @@ class CouponController extends Controller
         //apply
         $applied = 0;
         $totalCouponDiscount = 0;
+        // Agar coupon me koi category/service target hi nahi chuna gaya hai to
+        // coupon sab items par lagta hai. Pehle aise coupon kabhi apply hi nahi
+        // hota tha ("not valid for your cart").
+        $hasTargets = !empty($discountedIds);
         foreach ($cartItems as $item) {
-            if (!in_array($item->service_id, $discountedIds) && !in_array($item->category_id, $discountedIds)) {
+            if ($hasTargets && !in_array($item->service_id, $discountedIds) && !in_array($item->category_id, $discountedIds)) {
                 continue;
             }
 

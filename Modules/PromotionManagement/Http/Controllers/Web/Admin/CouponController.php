@@ -116,13 +116,13 @@ class CouponController extends Controller
             'discount_title' => 'required',
             'discount_title.0' => 'required',
             'coupon_type' => 'required|in:' . implode(',', array_keys(COUPON_TYPES)),
-            'discount_amount' => 'required|numeric',
+            'discount_amount' => $request['discount_amount_type'] == 'percent' ? 'required|numeric|min:0|max:100' : 'required|numeric|min:0',
             'discount_amount_type' => 'required|in:percent,amount',
-            'min_purchase' => 'required|numeric',
-            'max_discount_amount' => $request['discount_amount_type'] == 'amount' ? '' : 'required' . '|numeric|min:0',
+            'min_purchase' => 'required|numeric|min:0',
+            'max_discount_amount' => $request['discount_amount_type'] == 'amount' ? 'nullable' : 'nullable|numeric|min:0',
             'start_date' => 'required|date',
-            'end_date' => 'required|date',
-            'limit_per_user' => $request['coupon_type'] != 'first_booking' ? 'numeric' : '',
+            'end_date' => 'required|date|after_or_equal:start_date',
+            'limit_per_user' => $request['coupon_type'] != 'first_booking' ? 'nullable|numeric|min:1' : 'nullable',
 
             'customer_user_ids' => $request['coupon_type'] == 'customer_wise' ? 'required|array' : '',
             'customer_user_ids.*' => $request['coupon_type'] == 'customer_wise' ? 'uuid' : '',
@@ -130,6 +130,15 @@ class CouponController extends Controller
         ]);
 
         $request->merge(['provider_ids' => promotion_resolve_provider_ids($request)]);
+
+        // 'all' / '0' jaisa junk id discount_types me save hone se rokta hai.
+        $request->merge([
+            'category_ids' => promotion_clean_ids($request->input('category_ids', [])),
+            'service_ids' => promotion_clean_ids($request->input('service_ids', [])),
+            'zone_ids' => promotion_clean_ids($request->input('zone_ids', [])),
+            'provider_ids' => promotion_clean_ids($request->input('provider_ids', [])),
+            'customer_user_ids' => promotion_clean_ids($request->input('customer_user_ids', [])),
+        ]);
 
         DB::transaction(function () use ($request) {
             $discount = $this->discount;
@@ -139,7 +148,11 @@ class CouponController extends Controller
             $discount->discount_amount_type = $request['discount_amount_type'];
             $discount->min_purchase = $request['min_purchase'];
             $discount->max_discount_amount = !is_null($request['max_discount_amount']) ? $request['max_discount_amount'] : 0;
-            $discount->limit_per_user = $request['coupon_type'] != 'first_booking' ? $request['limit_per_user'] : 1;
+            $limitPerUser = (int)($request['limit_per_user'] ?? 1);
+            if ($limitPerUser < 1) {
+                $limitPerUser = 1;
+            }
+            $discount->limit_per_user = $request['coupon_type'] != 'first_booking' ? $limitPerUser : 1;
             $discount->promotion_type = 'coupon';
             $discount->start_date = $request['start_date'];
             $discount->end_date = $request['end_date'];
@@ -168,7 +181,7 @@ class CouponController extends Controller
                 $discount->discount_types()->createMany($types);
             }
 
-            if ($request->has('customer_user_ids')) {
+            if ($request['coupon_type'] == 'customer_wise' && !empty($request['customer_user_ids'])) {
                 $data = [];
                 foreach ($request['customer_user_ids'] as $item) {
                     $data[] = [
@@ -246,22 +259,30 @@ class CouponController extends Controller
     {
         $this->authorize('coupon_update');
         $request->validate([
-            'coupon_code' => ['nullable', 'unique:coupons,coupon_code,' . $id . ',id'],
+            'coupon_code' => ['required', 'unique:coupons,coupon_code,' . $id . ',id'],
             'discount_type' => 'required|in:category,service,zone,mixed',
             'discount_title' => 'required',
             'discount_title.0' => 'required',
             'coupon_type' => 'required|in:' . implode(',', array_keys(COUPON_TYPES)),
-            'discount_amount' => 'required|numeric',
+            'discount_amount' => $request['discount_amount_type'] == 'percent' ? 'required|numeric|min:0|max:100' : 'required|numeric|min:0',
             'discount_amount_type' => 'required|in:percent,amount',
-            'min_purchase' => 'required|numeric',
-            'max_discount_amount' => $request['discount_amount_type'] == 'amount' ? '' : 'required' . '|numeric|min:0',
+            'min_purchase' => 'required|numeric|min:0',
+            'max_discount_amount' => $request['discount_amount_type'] == 'amount' ? 'nullable' : 'nullable|numeric|min:0',
             'start_date' => 'required|date',
-            'end_date' => 'required|date',
-            'limit_per_user' => $request['coupon_type'] != 'first_booking' ? 'numeric' : '',
+            'end_date' => 'required|date|after_or_equal:start_date',
+            'limit_per_user' => $request['coupon_type'] != 'first_booking' ? 'nullable|numeric|min:1' : 'nullable',
             'provider_ids' => 'nullable|array',
         ]);
 
         $request->merge(['provider_ids' => promotion_resolve_provider_ids($request)]);
+
+        $request->merge([
+            'category_ids' => promotion_clean_ids($request->input('category_ids', [])),
+            'service_ids' => promotion_clean_ids($request->input('service_ids', [])),
+            'zone_ids' => promotion_clean_ids($request->input('zone_ids', [])),
+            'provider_ids' => promotion_clean_ids($request->input('provider_ids', [])),
+            'customer_user_ids' => promotion_clean_ids($request->input('customer_user_ids', [])),
+        ]);
 
         DB::transaction(function () use ($request, $id) {
             $coupon = $this->coupon->where(['id' => $id])->first();
@@ -276,7 +297,11 @@ class CouponController extends Controller
             $discount->discount_amount_type = $request['discount_amount_type'];
             $discount->min_purchase = $request['min_purchase'];
             $discount->max_discount_amount = !is_null($request['max_discount_amount']) ? $request['max_discount_amount'] : 0;
-            $discount->limit_per_user = $request['coupon_type'] != 'first_booking' ? $request['limit_per_user'] : 1;
+            $limitPerUser = (int)($request['limit_per_user'] ?? 1);
+            if ($limitPerUser < 1) {
+                $limitPerUser = 1;
+            }
+            $discount->limit_per_user = $request['coupon_type'] != 'first_booking' ? $limitPerUser : 1;
             $discount->promotion_type = 'coupon';
             $discount->start_date = $request['start_date'];
             $discount->end_date = $request['end_date'];
@@ -308,7 +333,8 @@ class CouponController extends Controller
             }
 
             //coupon customers
-            if ($request->has('customer_user_ids')) {
+            $this->couponCustomer->where('coupon_id', $coupon->id)->delete();
+            if ($request['coupon_type'] == 'customer_wise' && !empty($request['customer_user_ids'])) {
                 $data = [];
                 foreach ($request['customer_user_ids'] as $item) {
                     $data[] = [
@@ -320,7 +346,6 @@ class CouponController extends Controller
                     ];
                 }
 
-                $this->couponCustomer->where('coupon_id', $coupon->id)->delete();
                 $coupon->coupon_customers()->createmany($data);
             }
 

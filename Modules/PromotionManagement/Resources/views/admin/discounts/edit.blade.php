@@ -48,8 +48,10 @@
                                     </div>
                                     <div class="mb-30" id="category_selector"
                                          style="display: {{($discount->discount_type=='category' || $discount->discount_type=='mixed')?'block':'none'}}">
+                                        <label class="mb-2">{{ translate('Select Categories') }} *</label>
                                         <select class="category-select theme-input-style w-100" name="category_ids[]"
-                                                multiple="multiple" id="category_selector__select" {{($discount->discount_type=='category' || $discount->discount_type=='mixed')?'required':''}}>
+                                                multiple="multiple" id="category_selector__select"
+                                                data-placeholder="{{ translate('Select Category') }}">
                                             <option value="all">{{translate('Select All')}}</option>
                                             @foreach($categories as $category)
                                                 <option value="{{$category->id}}" {{in_array($category->id,$discount->category_types->pluck('type_wise_id')->toArray())?'selected':''}}>
@@ -60,8 +62,10 @@
                                     </div>
                                     <div class="mb-30" id="service_selector"
                                          style="display: {{($discount->discount_type=='service' || $discount->discount_type=='mixed')?'block':'none'}}">
+                                        <label class="mb-2">{{ translate('Select Services') }} *</label>
                                         <select class="service-select theme-input-style w-100" name="service_ids[]"
-                                                multiple="multiple" id="service_selector__select">
+                                                multiple="multiple" id="service_selector__select"
+                                                data-placeholder="{{ translate('Select Service') }}">
                                             <option value="all">{{translate('Select All')}}</option>
                                             @foreach($services as $service)
                                                 <option value="{{$service->id}}" {{in_array($service->id,$discount->service_types->pluck('type_wise_id')->toArray())?'selected':''}}>
@@ -71,8 +75,10 @@
                                         </select>
                                     </div>
                                     <div class="mb-30">
+                                        <label class="mb-2">{{ translate('Select Zones') }} *</label>
                                         <select class="zone-select theme-input-style w-100" name="zone_ids[]"
-                                                multiple="multiple" id="zone_selector__select" required>
+                                                multiple="multiple" id="zone_selector__select"
+                                                data-placeholder="{{ translate('Select Zone') }}">
                                             <option value="all">{{translate('Select All')}}</option>
                                             @foreach($zones as $zone)
                                                 <option value="{{$zone->id}}" {{in_array($zone->id,$discount->zone_types->pluck('type_wise_id')->toArray())?'selected':''}}>
@@ -155,6 +161,7 @@
                                                     <label>{{translate('max_discount')}} ({{currency_symbol()}}) *</label>
                                                     <span class="material-icons">price_change</span>
                                                 </div>
+                                                <small class="text-muted d-block mt-1">{{ translate('Keep 0 for no limit') }}</small>
                                             </div>
                                         </div>
                                     </div>
@@ -192,81 +199,95 @@
 
 @push('script')
     <script>
-        "use Strict";
+        "use strict";
 
+        (function () {
+            var $category = $('#category_selector__select');
+            var $service = $('#service_selector__select');
+            var $zone = $('#zone_selector__select');
 
-        $('#category_selector__select').on('change', function() {
-            var selectedValues = $(this).val();
-            if (selectedValues !== null && selectedValues.includes('all')) {
-                $(this).find('option').not(':disabled').prop('selected', 'selected');
-                $(this).find('option[value="all"]').prop('selected', false);
+            function initSelect($el, placeholder) {
+                if (!$el.length || typeof $.fn.select2 === 'undefined') return;
+                if ($el.data('select2')) return;
+                $el.select2({
+                    width: '100%',
+                    closeOnSelect: false,
+                    placeholder: placeholder || $el.attr('data-placeholder') || ''
+                });
             }
-        });
 
-        $('#service_selector__select').on('change', function() {
-            var selectedValues = $(this).val();
-            if (selectedValues !== null && selectedValues.includes('all')) {
-                $(this).find('option').not(':disabled').prop('selected', 'selected');
-                $(this).find('option[value="all"]').prop('selected', false);
+            initSelect($category, "{{ translate('Select Category') }}");
+            initSelect($service, "{{ translate('Select Service') }}");
+            initSelect($zone, "{{ translate('Select Zone') }}");
+
+            // "Select All" â€” select2 ka UI bhi refresh hona chahiye.
+            $('#category_selector__select, #service_selector__select, #zone_selector__select').on('change', function () {
+                var $el = $(this);
+                var values = $el.val() || [];
+
+                if (values.indexOf('all') === -1) return;
+
+                $el.find('option').each(function () {
+                    var $option = $(this);
+                    if ($option.val() === 'all' || $option.prop('disabled')) return;
+                    $option.prop('selected', true);
+                });
+                $el.find('option[value="all"]').prop('selected', false);
+                $el.trigger('change');
+            });
+
+            function toggleDiscountType() {
+                var type = $('input[name="discount_type"]:checked').val() || 'category';
+                $('#category_selector').toggle(type === 'category' || type === 'mixed');
+                $('#service_selector').toggle(type === 'service' || type === 'mixed');
             }
-        });
 
-        $('#zone_selector__select').on('change', function() {
-            var selectedValues = $(this).val();
-            if (selectedValues !== null && selectedValues.includes('all')) {
-                $(this).find('option').not(':disabled').prop('selected', 'selected');
-                $(this).find('option[value="all"]').prop('selected', false);
+            $('input[name="discount_type"]').on('change', toggleDiscountType);
+            toggleDiscountType();
+
+            function toggleAmountType() {
+                var type = $('input[name="discount_amount_type"]:checked').val() || 'percent';
+                if (type === 'percent') {
+                    $('#max_discount_amount').show();
+                    $('#discount_amount').attr('max', 100);
+                    $('#discount_amount__label').html("{{ translate('amount') }} (%) *");
+                } else {
+                    $('#max_discount_amount').hide();
+                    $('#discount_amount').removeAttr('max');
+                    $('#discount_amount__label').html("{{ translate('amount') }} ({{ currency_symbol() }}) *");
+                }
             }
-        });
 
-        $('#category').on('click', function () {
-            $('#category_selector').show();
-            $('#service_selector').hide();
+            $('input[name="discount_amount_type"]').on('change', toggleAmountType);
+            toggleAmountType();
 
-            $('#category_selector__select').prop('required',true);
-            $('#service_selector__select').prop('required',false);
-        });
+            $('.main-content form').on('submit', function (e) {
+                function fail(message, $select) {
+                    e.preventDefault();
+                    if (typeof toastr !== 'undefined') {
+                        toastr.error(message);
+                    } else {
+                        alert(message);
+                    }
+                    if ($select && $select.length && $select.data('select2')) {
+                        $select.select2('open');
+                    }
+                    return false;
+                }
 
-        $('#service').on('click', function () {
-            $('#category_selector').hide();
-            $('#service_selector').show();
+                var discountType = $('input[name="discount_type"]:checked').val() || 'category';
 
-            $('#service_selector__select').prop('required',true);
-            $('#category_selector__select').prop('required',false);
-        });
-
-        $('#mixed').on('click', function () {
-            $('#category_selector').show();
-            $('#service_selector').show();
-
-            $('#service_selector__select').prop('required',true);
-            $('#category_selector__select').prop('required',true);
-        });
-
-        $('#percentage').on('click', function () {
-            $('#max_discount_amount').show();
-
-            $('#discount_amount').attr({"max" : 100});
-            $('#discount_amount__label').html('{{translate('amount')}} (%)');
-        });
-
-        $('#fixed_amount').on('click', function () {
-            $('#max_discount_amount').hide();
-
-            $('#discount_amount').removeAttr('max');
-            $('#discount_amount__label').html('{{translate('amount')}} ({{currency_symbol()}})');
-        });
-
-        //Select 2
-        $(".category-select").select2({
-            placeholder: "{{translate('Select Category')}}",
-        });
-        $(".service-select").select2({
-            placeholder: "{{translate('Select Service')}}",
-        });
-        $(".zone-select").select2({
-            placeholder: "{{translate('Select Zone')}}",
-        });
-
+                if (($zone.val() || []).length === 0) {
+                    return fail({!! json_encode(translate('Select at least one zone')) !!}, $zone);
+                }
+                if ((discountType === 'category' || discountType === 'mixed') && ($category.val() || []).length === 0) {
+                    return fail({!! json_encode(translate('Select at least one category')) !!}, $category);
+                }
+                if ((discountType === 'service' || discountType === 'mixed') && ($service.val() || []).length === 0) {
+                    return fail({!! json_encode(translate('Select at least one service')) !!}, $service);
+                }
+                return true;
+            });
+        })();
     </script>
 @endpush

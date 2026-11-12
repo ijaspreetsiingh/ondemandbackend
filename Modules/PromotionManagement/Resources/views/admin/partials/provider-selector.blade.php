@@ -148,8 +148,10 @@
             $('#category_selector__select, #service_selector__select, #zone_selector__select').on('change', loadProviders);
             $('input[name="discount_type"]').on('change', loadProviders);
 
-            if ($.fn.select2) {
+            if ($.fn.select2 && !$('#provider_selector__select').data('select2')) {
                 $('.provider-select').select2({
+                    width: '100%',
+                    closeOnSelect: false,
                     placeholder: '{{ translate("Select Providers") }}'
                 });
             }
