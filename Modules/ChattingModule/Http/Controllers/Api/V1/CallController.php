@@ -755,7 +755,10 @@ class CallController extends Controller
         return [
             'agora_app_id' => $agora['app_id'],
             'channel_name' => $call->id,
-            'rtc_uid' => $uid,
+            // INT hona zaroori hai: app model `int? rtcUid` me direct assign karta
+            // hai. String bhejne par Dart runtime exception aata tha aur call
+            // screen hamesha "connecting" par atak jati thi.
+            'rtc_uid' => (int) $uid,
             'rtc_token' => AgoraToken::build(
                 $agora['app_id'],
                 $agora['certificate'],
