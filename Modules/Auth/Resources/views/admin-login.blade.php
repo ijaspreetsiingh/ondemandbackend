@@ -121,20 +121,12 @@
             padding: 44px 48px 40px;
             background-color: #0e0e0e;
             background-image:
-                linear-gradient(to right, rgba(255, 255, 255, .045) 1px, transparent 1px),
-                linear-gradient(to bottom, rgba(255, 255, 255, .045) 1px, transparent 1px);
+                linear-gradient(to right, rgba(255, 255, 255, .035) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, .035) 1px, transparent 1px);
             background-size: 56px 56px;
             background-position: -1px -1px;
             color: #ffffff;
             overflow: hidden;
-        }
-
-        .brand::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background: radial-gradient(120% 90% at 8% 0%, rgba(255, 255, 255, .07) 0%, transparent 62%);
-            pointer-events: none;
         }
 
         .brand__top {
@@ -205,6 +197,37 @@
             font-size: 13.5px;
             line-height: 1.65;
             color: rgba(255, 255, 255, .58);
+        }
+
+        /* contents index — panel ko bharne ke liye, sajawat nahi */
+        .brand__list {
+            list-style: none;
+            margin: 0 0 24px;
+            padding: 0;
+            max-width: 460px;
+        }
+
+        .brand__list li {
+            display: flex;
+            align-items: baseline;
+            gap: 16px;
+            padding: 10px 0;
+            border-top: 1px solid rgba(255, 255, 255, .16);
+            font-size: 12.5px;
+            line-height: 1.45;
+            color: rgba(255, 255, 255, .62);
+        }
+
+        .brand__list li:last-child {
+            border-bottom: 1px solid rgba(255, 255, 255, .16);
+        }
+
+        .brand__list .num {
+            flex: 0 0 auto;
+            font-size: 9.5px;
+            font-weight: 700;
+            letter-spacing: .14em;
+            color: rgba(255, 255, 255, .3);
         }
 
         .brand__rule {
@@ -499,7 +522,7 @@
                 background-size: 40px 40px;
             }
 
-            .brand__middle, .brand__rule, .brand__bottom { display: none; }
+            .brand__middle, .brand__list, .brand__rule, .brand__bottom { display: none; }
 
             .panel { padding: 32px 24px 24px; }
             .panel__body { padding: 12px 0 28px; max-width: 420px; }
@@ -537,6 +560,11 @@
         </div>
 
         <div>
+            <ul class="brand__list">
+                <li><span class="num">01</span><span>{{ translate('login_brand_point_bookings') }}</span></li>
+                <li><span class="num">02</span><span>{{ translate('login_brand_point_money') }}</span></li>
+                <li><span class="num">03</span><span>{{ translate('login_brand_point_team') }}</span></li>
+            </ul>
             <div class="brand__rule"></div>
             <div class="brand__bottom">
                 @if (!empty($softwareVersion))

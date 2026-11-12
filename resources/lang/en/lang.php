@@ -6290,9 +6290,12 @@ _Message' => 'Customer notification for provider bid offer
   'payment_method_not_allowed_for_provider' => 'Selected payment method is not available for this provider.',
 
   // Admin login page (split layout)
-  'everything_your_team_runs_on' => 'Everything your team runs on',
-  'one_console' => 'in one console.',
+  'everything_your_team_runs_on' => 'Run the whole day',
+  'one_console' => 'from one console.',
   'login_brand_text' => 'Bookings, providers, payments and payouts — one workspace for the people who keep the day moving.',
+  'login_brand_point_bookings' => 'Bookings, schedules and dispatch',
+  'login_brand_point_money' => 'Payments, refunds and payouts',
+  'login_brand_point_team' => 'Providers, staff and permissions',
   'admin_console' => 'Admin console',
   'admin_access' => 'Admin access',
   'login_help_text' => 'Trouble signing in? Contact your workspace owner.',
