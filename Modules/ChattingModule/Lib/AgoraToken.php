@@ -55,11 +55,19 @@ class AgoraToken
     }
 
     /**
-     * User uuid se stable numeric RTC uid (4294967295 max).
+     * User uuid se stable numeric RTC uid.
+     *
+     * 31-bit range me rakha jaata hai (0 .. 2147483647) kyunki Android SDK
+     * uid ko signed Java `int` ki tarah leta hai. Isse bada value bhejne par
+     * join fail ho sakta hai — isliye top bit mask kar diya.
      * Dono parties ke uid alag honge kyunki uuid alag hain.
      */
     public static function uidFromUserId(string $userId): string
     {
-        return (string)sprintf('%u', crc32($userId));
+        $uid = crc32($userId) & 0x7fffffff;
+
+        // uid 0 ka matlab Agora me "koi bhi uid" hota hai — token match nahi
+        // karega. Aisa kabhi ho to 1 par shift kar do (stable rehta hai).
+        return (string)($uid === 0 ? 1 : $uid);
     }
 }
