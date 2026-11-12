@@ -3,8 +3,6 @@
 use Illuminate\Support\Facades\Route;
 use Modules\Auth\Http\Controllers\LoginController;
 use Modules\Auth\Http\Controllers\RegisterController;
-use Modules\Auth\Http\Controllers\Web\PasswordResetController;
-use Modules\Auth\Http\Controllers\Web\VerificationController;
 
 Route::group(['prefix' => 'admin', 'as' => 'admin.', 'middleware' => ['actch:admin_panel']], function () {
     Route::group(['prefix' => 'auth', 'as' => 'auth.'], function () {
@@ -15,24 +13,34 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'middleware' => ['actch:adm
 });
 
 Route::group(['prefix' => 'provider', 'as' => 'provider.'], function () {
+    /**
+     * Provider portal yahan se band hai.
+     *
+     * Provider ka login / sign-up / password-reset / verification ab portal me
+     * nahi chalega. Route names yahin register rehte hain (mail templates aur
+     * purane links `route('provider.auth.login')` use karte hain) lekin har
+     * request admin login par redirect ho jati hai. Provider app ki API
+     * functionality is se bilkul untouched hai.
+     */
     Route::group(['prefix' => 'auth', 'as' => 'auth.'], function () {
-        Route::get('sign-up', [RegisterController::class, 'providerSelfRegisterForm'])->name('sign-up');
-        Route::post('sign-up', [RegisterController::class, 'providerSelfRegister'])->name('sign-up-submit');
-        Route::get('login', [LoginController::class, 'providerLoginForm'])->name('login');
-        Route::post('login', [LoginController::class, 'providerLogin'])->middleware('throttle:login');
-        Route::get('logout', [LoginController::class, 'logout'])->name('logout');
+        $toAdminLogin = fn () => redirect()->route('admin.auth.login');
 
-        Route::group(['prefix' => 'reset-password', 'as' => 'reset-password.'], function () {
-            Route::get('/', [PasswordResetController::class, 'index'])->name('index');
-            Route::post('send-otp', [PasswordResetController::class, 'sendOtp'])->name('send-otp');
-            Route::post('verify-otp', [PasswordResetController::class, 'verifyOtp'])->name('verify-otp');
-            Route::post('change-password', [PasswordResetController::class, 'changePassword'])->name('change-password');
+        Route::any('sign-up', $toAdminLogin)->name('sign-up');
+        Route::any('sign-up-submit', $toAdminLogin)->name('sign-up-submit');
+        Route::any('login', $toAdminLogin)->name('login');
+        Route::any('logout', $toAdminLogin)->name('logout');
+
+        Route::group(['prefix' => 'reset-password', 'as' => 'reset-password.'], function () use ($toAdminLogin) {
+            Route::any('/', $toAdminLogin)->name('index');
+            Route::any('send-otp', $toAdminLogin)->name('send-otp');
+            Route::any('verify-otp', $toAdminLogin)->name('verify-otp');
+            Route::any('change-password', $toAdminLogin)->name('change-password');
         });
 
-        Route::group(['prefix' => 'verification', 'as' => 'verification.'], function () {
-            Route::get('/', [VerificationController::class, 'index'])->name('index');
-            Route::post('send-otp', [VerificationController::class, 'sendOtp'])->name('send-otp');
-            Route::post('verify-otp', [VerificationController::class, 'verifyOtp'])->name('verify-otp');
+        Route::group(['prefix' => 'verification', 'as' => 'verification.'], function () use ($toAdminLogin) {
+            Route::any('/', $toAdminLogin)->name('index');
+            Route::any('send-otp', $toAdminLogin)->name('send-otp');
+            Route::any('verify-otp', $toAdminLogin)->name('verify-otp');
         });
     });
 

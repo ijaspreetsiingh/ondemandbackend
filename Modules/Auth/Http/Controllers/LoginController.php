@@ -32,12 +32,11 @@ class LoginController extends Controller
     {
         $this->user = $user;
         $this->middleware(function ($request, $next) {
+            // Provider/serviceman portal band hone ke baad sirf admin ko hi
+            // dashboard par bhejna hai. Warna provider session wala user
+            // admin login par aake redirect loop me phans jata tha.
             if ($request->user() !== null && in_array($request->user()->user_type, ADMIN_USER_TYPES)) {
                 return redirect('admin/dashboard');
-            } elseif ($request->user() !== null && $request->user()->user_type === 'provider-serviceman') {
-                return redirect('serviceman/dashboard');
-            } elseif ($request->user() !== null && in_array($request->user()->user_type, PROVIDER_USER_TYPES)) {
-                return redirect('provider/dashboard');
             }
             return $next($request);
         })->except('logout');
@@ -451,13 +450,8 @@ class LoginController extends Controller
         if (auth()->user()) {
             $userType = auth()->user()->user_type;
 
-            if (in_array($userType, ADMIN_USER_TYPES)) {
-                $redirect_route = 'admin.auth.login';
-            } elseif ($userType === 'provider-serviceman') {
-                $redirect_route = 'serviceman.auth.login';
-            } else {
-                $redirect_route = 'provider.auth.login';
-            }
+            // Provider/serviceman portal band hai — sabko admin login par bhejo.
+            $redirect_route = 'admin.auth.login';
 
             if (!in_array($userType, ADMIN_USER_TYPES)) {
                 $request->session()->forget('modalClosed');

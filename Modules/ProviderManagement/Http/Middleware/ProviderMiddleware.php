@@ -11,16 +11,18 @@ class ProviderMiddleware
     /**
      * Handle an incoming request.
      *
-     * @param \Illuminate\Http\Request $request
-     * @param \Closure $next
+     * Provider portal abhi band hai — sirf admin hi portal me login kar sakta
+     * hai. Provider ka koi bhi web route (dashboard, bookings, wallet, reports)
+     * admin login par redirect ho jata hai. Provider app ki API functionality
+     * par iska koi asar nahi hai.
+     *
+     * @param Request $request
+     * @param Closure $next
      * @return mixed
      */
     public function handle(Request $request, Closure $next)
     {
-        if (auth()->check() && in_array(auth()->user()->user_type, PROVIDER_USER_TYPES)) {
-            return $next($request);
-        }
-        Toastr::info(translate(ACCESS_DENIED['message']));
-        return redirect('provider/auth/login');
+        Toastr::info(translate('Provider panel is currently disabled. Please use the admin panel.'));
+        return redirect()->route('admin.auth.login');
     }
 }
