@@ -484,8 +484,8 @@ class CallController extends Controller
         string $call_id,
         string $call_type,
         string $user_name,
-        string $user_image,
-        string $user_phone,
+        ?string $user_image,
+        ?string $user_phone,
         string $user_type,
         ?string $booking_id,
         ?string $channel_id,
@@ -499,8 +499,10 @@ class CallController extends Controller
                 call_id: $call_id,
                 call_type: $call_type,
                 user_name: $user_name,
-                user_image: $user_image,
-                user_phone: $user_phone,
+                // Jis user ki profile photo / phone nahi hai wahan null aata hai.
+                // Purane strict signature ne yahin 500 "Server Error" diya tha.
+                user_image: (string) ($user_image ?? ''),
+                user_phone: (string) ($user_phone ?? ''),
                 user_type: $user_type,
                 booking_id: $booking_id,
                 channel_id: $channel_id,
