@@ -5,7 +5,66 @@
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <meta name="robots" content="nofollow, noindex"/>
-    @php($favIcon = getBusinessSettingsImageFullPath(key: 'business_favicon', settingType: 'business_information', path: 'business/', defaultPath: 'public/assets/admin-module/img/placeholder.png'))
+    @php
+        /**
+         * Login page kabhi bhi 500 na de.
+         *
+         * Har helper call try/catch me hai. Agar koi business setting missing
+         * ho, helper fail ho ya cache down ho — page phir bhi placeholder ke
+         * saath render hoga, blank 500 nahi aayega.
+         */
+        $placeholder = asset('public/assets/admin-module/img/placeholder.png');
+        $favIcon = $placeholder;
+        $logo = $placeholder;
+        $businessName = null;
+        $softwareVersion = null;
+
+        try {
+            $favIcon = getBusinessSettingsImageFullPath(key: 'business_favicon', settingType: 'business_information', path: 'business/', defaultPath: 'public/assets/admin-module/img/placeholder.png');
+        } catch (\Throwable $e) {
+        }
+
+        try {
+            $logo = getBusinessSettingsImageFullPath(key: 'business_logo', settingType: 'business_information', path: 'business/', defaultPath: 'public/assets/admin-module/img/placeholder.png');
+        } catch (\Throwable $e) {
+        }
+
+        try {
+            $businessNameSetting = business_config('business_name', 'business_information');
+            $businessNameValues = is_object($businessNameSetting)
+                ? ($businessNameSetting->live_values ?? null)
+                : $businessNameSetting;
+
+            if (is_array($businessNameValues)) {
+                $businessName = $businessNameValues['business_name'] ?? ($businessNameValues['value'] ?? null);
+            } elseif (is_string($businessNameValues)) {
+                $businessName = $businessNameValues;
+            }
+
+            $businessName = is_string($businessName) && trim($businessName) !== '' ? trim($businessName) : null;
+        } catch (\Throwable $e) {
+            $businessName = null;
+        }
+
+        try {
+            $softwareVersion = env('SOFTWARE_VERSION');
+        } catch (\Throwable $e) {
+            $softwareVersion = null;
+        }
+
+        $recaptchaEnabled = false;
+        $recaptchaSiteKey = null;
+
+        try {
+            $recaptchaSetting = business_config('recaptcha', 'third_party');
+            $recaptchaValues = is_object($recaptchaSetting) ? ($recaptchaSetting->live_values ?? null) : null;
+            $recaptchaSiteKey = is_array($recaptchaValues) ? ($recaptchaValues['site_key'] ?? null) : null;
+            $recaptchaEnabled = is_object($recaptchaSetting) && !empty($recaptchaSetting->is_active) && !empty($recaptchaSiteKey);
+        } catch (\Throwable $e) {
+            $recaptchaEnabled = false;
+            $recaptchaSiteKey = null;
+        }
+    @endphp
     <link rel="shortcut icon" href="{{ $favIcon }}"/>
 
     <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -406,15 +465,6 @@
 <span class="orb orb-2" aria-hidden="true"></span>
 <span class="orb orb-3" aria-hidden="true"></span>
 
-@php
-    $logo = getBusinessSettingsImageFullPath(key: 'business_logo', settingType: 'business_information', path: 'business/', defaultPath: 'public/assets/admin-module/img/placeholder.png');
-    $businessNameSetting = business_config('business_name', 'business_information')?->live_values;
-    if (is_array($businessNameSetting)) {
-        $businessNameSetting = $businessNameSetting['business_name'] ?? ($businessNameSetting['value'] ?? null);
-    }
-    $businessName = is_string($businessNameSetting) && trim($businessNameSetting) !== '' ? $businessNameSetting : null;
-@endphp
-
 <main class="auth-shell">
     <section class="auth-card">
         <div class="auth-brand">
@@ -425,13 +475,15 @@
                     <span class="auth-brand__tag">{{ translate('admin') }}</span>
                 </div>
             </div>
-            <span class="auth-version">{{ translate('Software_Version') }} {{ env('SOFTWARE_VERSION') }}</span>
+            @if (!empty($softwareVersion))
+                <span class="auth-version">{{ translate('Software_Version') }} {{ $softwareVersion }}</span>
+            @endif
         </div>
 
         <h1 class="auth-title">{{ translate('admin_Sign_In') }}</h1>
         <p class="auth-subtitle">{{ translate('sign_in_to_stay_connected') }}</p>
 
-        @if ($errors->any())
+        @if (isset($errors) && $errors->any())
             <div class="auth-alert" role="alert">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"
                      style="flex:0 0 auto;margin-top:1px">
@@ -504,8 +556,7 @@
                 </label>
             </div>
 
-            @php($recaptcha = business_config('recaptcha', 'third_party'))
-            @if(isset($recaptcha) && $recaptcha->is_active)
+            @if($recaptchaEnabled)
                 <input type="hidden" name="g-recaptcha-response" id="g-recaptcha-response">
             @endif
 
@@ -516,7 +567,7 @@
                 </svg>
             </button>
 
-            @if(env('APP_ENV') == 'demo')
+            @if(config('app.env') == 'demo')
                 <div class="auth-demo">
                     <button type="button" class="login-copy" aria-label="{{ translate('copy') }}">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -547,7 +598,15 @@
 
 <script src="{{ asset('public/assets/admin-module') }}/js/jquery-3.6.0.min.js"></script>
 <script src="{{ asset('public/assets/admin-module') }}/js/toastr.js"></script>
-{!! Toastr::message() !!}
+@php
+    $toastrHtml = '';
+    try {
+        $toastrHtml = Toastr::message();
+    } catch (\Throwable $e) {
+        $toastrHtml = '';
+    }
+@endphp
+{!! $toastrHtml !!}
 
 <script>
     "use strict";
@@ -580,7 +639,7 @@
         }
     })();
 
-    @if(env('APP_ENV') == 'demo')
+    @if(config('app.env') == 'demo')
     $('.login-copy').on('click', function () {
         $('#email').val('admin@admin.com');
         $('#password').val('12345678');
@@ -589,9 +648,8 @@
     @endif
 </script>
 
-@php($recaptcha = business_config('recaptcha', 'third_party'))
-@if(isset($recaptcha) && $recaptcha->is_active)
-    <script src="https://www.google.com/recaptcha/api.js?render={{ $recaptcha->live_values['site_key'] }}"></script>
+@if($recaptchaEnabled)
+    <script src="https://www.google.com/recaptcha/api.js?render={{ $recaptchaSiteKey }}"></script>
     <script>
         "use strict";
 
@@ -613,7 +671,7 @@
             }
 
             grecaptcha.ready(function () {
-                grecaptcha.execute('{{ $recaptcha->live_values['site_key'] }}', {action: 'submit'})
+                grecaptcha.execute('{{ $recaptchaSiteKey }}', {action: 'submit'})
                     .then(function (token) {
                         tokenField.value = token;
                         form.submit();
