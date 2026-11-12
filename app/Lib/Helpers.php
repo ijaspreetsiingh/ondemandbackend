@@ -1320,15 +1320,26 @@ if (!function_exists('providerBookingFeeLabel')) {
      */
     function providerBookingFeeLabel($provider): ?string
     {
-        if (!providerCustomFeesEnabled($provider)) {
+        if (!providerIsIndependent($provider)) {
             return null;
         }
+
+        $fee = (float) ($provider->booking_fee ?? 0);
         $label = trim((string) ($provider->booking_fee_label ?? ''));
+
+        // Label sirf tab chhodna chahiye jab provider ki fee hi na lage.
+        // Agar provider ki booking_fee lag rahi hai (separate fees ON, ya legacy
+        // fee > 0 fallback) to uska apna label hi dikhna chahiye — warna customer
+        // ko global "Booking Fee" dikhta hai jabke charge provider ka hai.
+        if (!providerCustomFeesEnabled($provider) && $fee <= 0) {
+            return null;
+        }
+
         if ($label !== '') {
             return $label;
         }
+
         // Fee set hai par label empty hai -> default label, taaki charge app me show ho.
-        $fee = (float) ($provider->booking_fee ?? 0);
         return $fee > 0 ? 'Booking Fee' : null;
     }
 }

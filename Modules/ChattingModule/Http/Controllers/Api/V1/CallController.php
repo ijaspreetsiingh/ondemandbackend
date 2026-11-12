@@ -44,6 +44,23 @@ class CallController extends Controller
      */
     public function initiate(Request $request): JsonResponse
     {
+        try {
+            return $this->initiateCall($request);
+        } catch (\Throwable $exception) {
+            \Illuminate\Support\Facades\Log::error('call.initiate failed', [
+                'message' => $exception->getMessage(),
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
+                'payload' => $request->only(['callee_id', 'call_type', 'booking_id']),
+                'caller' => optional($request->user())->id,
+            ]);
+
+            return $this->error('Call failed: ' . mb_substr($exception->getMessage(), 0, 200), 500);
+        }
+    }
+
+    private function initiateCall(Request $request): JsonResponse
+    {
         $validator = Validator::make($request->all(), [
             'callee_id' => 'required|string|max:64',
             'call_type' => 'nullable|in:voice,video',
@@ -119,7 +136,7 @@ class CallController extends Controller
         $call->save();
 
         if ($callee->fcm_token) {
-            device_notification_for_calling(
+            $this->notifyCall(
                 fcm_token: $callee->fcm_token,
                 title: $call->call_type === 'video' ? translate('Incoming video call') : translate('Incoming call'),
                 description: trim($caller->first_name . ' ' . $caller->last_name),
@@ -142,6 +159,21 @@ class CallController extends Controller
      * POST call/respond — callee accept / reject karega.
      */
     public function respond(Request $request): JsonResponse
+    {
+        try {
+            return $this->respondCall($request);
+        } catch (\Throwable $exception) {
+            \Illuminate\Support\Facades\Log::error('call.respond failed', [
+                'message' => $exception->getMessage(),
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
+            ]);
+
+            return $this->error('Call failed: ' . mb_substr($exception->getMessage(), 0, 200), 500);
+        }
+    }
+
+    private function respondCall(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'call_id' => 'required|string|max:64',
@@ -182,7 +214,7 @@ class CallController extends Controller
         }
 
         if ($caller && $caller->fcm_token) {
-            device_notification_for_calling(
+            $this->notifyCall(
                 fcm_token: $caller->fcm_token,
                 title: $request->action === 'accept' ? translate('Call accepted') : translate('Call rejected'),
                 description: trim($me->first_name . ' ' . $me->last_name),
@@ -248,7 +280,7 @@ class CallController extends Controller
         $otherUser = User::find($otherUserId);
 
         if ($otherUser && $otherUser->fcm_token) {
-            device_notification_for_calling(
+            $this->notifyCall(
                 fcm_token: $otherUser->fcm_token,
                 title: translate('Call ended'),
                 description: trim($me->first_name . ' ' . $me->last_name),
@@ -439,6 +471,51 @@ class CallController extends Controller
     }
 
     /**
+     * Push (FCM) bhejna call flow ka "best effort" hissa hai — agar push fail ho
+     * jaye (queue/redis down, FCM 500, invalid token) to call phir bhi ban jani
+     * chahiye. Callee ke paas `call/active` polling recovery hamesha maujood
+     * hai. Isliye push ko try/catch me rakha hai, warna ek push failure poore
+     * initiate par 500 "Server Error" de deta hai.
+     */
+    private function notifyCall(
+        string $fcm_token,
+        string $title,
+        ?string $description,
+        string $call_id,
+        string $call_type,
+        string $user_name,
+        string $user_image,
+        string $user_phone,
+        string $user_type,
+        ?string $booking_id,
+        ?string $channel_id,
+        string $type = 'call_invite'
+    ): void {
+        try {
+            device_notification_for_calling(
+                fcm_token: $fcm_token,
+                title: $title,
+                description: $description,
+                call_id: $call_id,
+                call_type: $call_type,
+                user_name: $user_name,
+                user_image: $user_image,
+                user_phone: $user_phone,
+                user_type: $user_type,
+                booking_id: $booking_id,
+                channel_id: $channel_id,
+                type: $type,
+            );
+        } catch (\Throwable $exception) {
+            \Illuminate\Support\Facades\Log::warning('call push failed', [
+                'type' => $type,
+                'call_id' => $call_id,
+                'message' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    /**
      * Success response. `response_code` uppercase me bhi bhejte hain kyunki
      * purane app builds `'DEFAULT_200'` se compare karte hain, jabke backend
      * by default lowercase `'default_200'` deta hai. Isse purane APK bina
@@ -459,7 +536,38 @@ class CallController extends Controller
      */
     private function callResponse(Call $call, User $me, bool $withToken = false): JsonResponse
     {
-        $payload = $this->formatCall($call, $me, $withToken);
+        try {
+            $payload = $this->formatCall($call, $me, $withToken);
+        } catch (\Throwable $exception) {
+            // Payload banate waqt koi bhi issue (relation/accessor) aaye to bhi
+            // call ko fail mat karo — minimal payload se app ring kar sake.
+            \Illuminate\Support\Facades\Log::error('call.format failed', [
+                'call_id' => $call->id,
+                'message' => $exception->getMessage(),
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
+            ]);
+
+            $payload = [
+                'id' => $call->id,
+                'call_type' => $call->call_type,
+                'status' => $call->status,
+                'direction' => $call->caller_id === $me->id ? 'out' : 'in',
+                'duration' => (int) $call->duration,
+                'created_at' => $call->created_at,
+                'answered_at' => $call->answered_at,
+                'ended_at' => $call->ended_at,
+                'booking_id' => $call->booking_id,
+                'channel_id' => $call->channel_id,
+                'other_user' => [
+                    'id' => $call->caller_id === $me->id ? $call->callee_id : $call->caller_id,
+                    'name' => '',
+                    'image' => null,
+                    'phone' => null,
+                    'user_type' => null,
+                ],
+            ];
+        }
 
         return $this->okResponse(array_merge($payload, [
             'call' => $payload,
@@ -577,6 +685,12 @@ class CallController extends Controller
 
     private function allProvidersCallingEnabled(array $providerIds): bool
     {
+        // Agar migration nahi chali (column hi nahi hai) to gate ko fail mat karo,
+        // warna har call 500 "Server Error" deta hai.
+        if (!\Illuminate\Support\Facades\Schema::hasColumn('providers', 'calling_enabled')) {
+            return true;
+        }
+
         $enabledCount = \Modules\ProviderManagement\Entities\Provider::whereIn('id', $providerIds)
             ->where('calling_enabled', 1)
             ->count();
