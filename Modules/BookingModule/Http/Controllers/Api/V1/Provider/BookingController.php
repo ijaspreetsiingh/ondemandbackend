@@ -1401,8 +1401,12 @@ class BookingController extends Controller
         $slots = BookingServiceman::where('booking_id', $booking->id)
             ->pluck('status', 'serviceman_id');
 
-        $subCategoryId = $booking->sub_category_id
-            ?? $booking->detail?->first()?->service?->sub_category_id;
+        $bookingServices = $booking->detail->map(function ($detail) {
+            return [
+                'name' => $detail->service?->name ?? translate('Service'),
+                'sub_category_id' => $detail->service?->sub_category_id,
+            ];
+        })->values();
         [$bookingLat, $bookingLng] = getBookingCoordinates($booking);
         $freshCutoff = now()->subMinutes(5);
         $servicemen = \Modules\UserManagement\Entities\Serviceman::query()
@@ -1414,9 +1418,12 @@ class BookingController extends Controller
                 'servicemanCategories.subCategory:id,name',
             ])
             ->get()
-            ->map(function ($serviceman) use ($subCategoryId, $bookingLat, $bookingLng, $freshCutoff, $slots) {
-                $serviceman->is_category_match = $serviceman->servicemanCategories
-                    ->contains(fn($category) => (string) $category->sub_category_id === (string) $subCategoryId);
+            ->map(function ($serviceman) use ($bookingServices, $bookingLat, $bookingLng, $freshCutoff, $slots) {
+                $assignedIds = $serviceman->servicemanCategories->pluck('sub_category_id')->map(fn($id) => (string) $id);
+                $serviceman->matching_services = $bookingServices
+                    ->filter(fn($service) => $service['sub_category_id'] && $assignedIds->contains((string) $service['sub_category_id']))
+                    ->pluck('name')->unique()->values();
+                $serviceman->is_category_match = $serviceman->matching_services->isNotEmpty();
                 $user = $serviceman->user;
                 $freshLocation = $user?->last_location_updated_at
                     && Carbon::parse($user->last_location_updated_at)->gt($freshCutoff);
@@ -1444,6 +1451,7 @@ class BookingController extends Controller
                         ?? ($serviceman->user?->profile_image ? asset('public/assets/provider-module/img/user2x.png') : null),
                     'is_category_match' => (bool) $serviceman->is_category_match,
                     'assigned_categories' => $serviceman->servicemanCategories->pluck('subCategory.name')->filter()->values(),
+                    'matching_services' => $serviceman->matching_services,
                     'distance_km' => $serviceman->distance_km !== null ? round($serviceman->distance_km, 2) : null,
                     'slot_status' => $serviceman->slot_status,
                 ];
@@ -1459,12 +1467,13 @@ class BookingController extends Controller
                 : 0,
             'wait_time' => (int) ($provider->auto_assign_wait_time ?: 120),
             'max_team_size' => 1,
+            'booking_services' => $bookingServices,
             'servicemen' => $servicemen,
         ]), 200);
     }
 
     /**
-     * Provider selects one category-eligible serviceman for this booking.
+     * Provider assigns the entire booking to one active member of their team.
      */
     public function assignServicemen(Request $request, string $bookingId): JsonResponse
     {
@@ -1491,44 +1500,39 @@ class BookingController extends Controller
             return response()->json(response_formatter(DEFAULT_400, null, [['error_code' => 'booking', 'message' => 'Booking is not available for serviceman assignment']]), 400);
         }
 
-        if ((string) $booking->zone_id !== (string) $provider->zone_id
-            || !subcategory_has_serviceable_provider(
-                $booking->sub_category_id,
-                $booking->category_id,
-                $booking->zone_id,
-                $provider->id
-            )) {
+        $bookingSubCategoryIds = $booking->detail()->with('service')->get()
+            ->pluck('service.sub_category_id')->filter()->unique()->values();
+        if ($booking->sub_category_id) {
+            $bookingSubCategoryIds->push($booking->sub_category_id);
+        }
+        $providerOwnsCategory = \Modules\ProviderManagement\Entities\SubscribedService::query()
+            ->where('provider_id', $provider->id)
+            ->where('zone_id', $booking->zone_id)
+            ->where('is_subscribed', 1)
+            ->where(function ($query) use ($booking, $bookingSubCategoryIds) {
+                if ($bookingSubCategoryIds->isNotEmpty()) {
+                    $query->whereIn('sub_category_id', $bookingSubCategoryIds);
+                } else {
+                    $query->whereRaw('1 = 0');
+                }
+                $query->orWhere(function ($categoryQuery) use ($booking) {
+                    $categoryQuery->where('category_id', $booking->category_id)->where('assign_type', 'complete');
+                });
+            })->exists();
+        if ((string) $booking->zone_id !== (string) $provider->zone_id || !$providerOwnsCategory) {
             return response()->json(response_formatter(DEFAULT_400, null, 'Booking category is not assigned to this provider in this zone'), 400);
         }
 
         $servicemanIds = array_values(array_unique($request->input('serviceman_ids')));
-        $eligibleIds = findNearestServicemen($booking, $provider->id, [])
-            ->pluck('id')
-            ->map(fn($id) => (string) $id)
-            ->all();
         $validServicemen = \Modules\UserManagement\Entities\Serviceman::whereIn('id', $servicemanIds)
             ->where('provider_id', $provider->id)
+            ->where('is_on_duty', 1)
+            ->whereHas('user', fn($query) => $query->where('is_active', 1))
             ->pluck('id')
             ->toArray();
 
-        if (count($validServicemen) !== 1 || !in_array((string) $validServicemen[0], $eligibleIds, true)) {
-            return response()->json(response_formatter(DEFAULT_400, null, 'Select one active, on-duty serviceman assigned to this category'), 400);
-        }
-
-        // Category match zaroori: staff jiski booking ki category assign nahi hai
-        // use manually assign nahi kar sakte (UI bhi yehi block karta hai).
-        $bookingSubCategoryId = $booking->sub_category_id
-            ?? $booking->detail?->first()?->service?->sub_category_id
-            ?? null;
-        $selectedServiceman = \Modules\UserManagement\Entities\Serviceman::with('servicemanCategories')
-            ->where('id', $validServicemen[0])
-            ->first();
-        $hasCategory = $selectedServiceman?->servicemanCategories->isNotEmpty() ?? false;
-        $categoryMatched = $selectedServiceman?->servicemanCategories
-            ->contains(fn($category) => (string) $category->sub_category_id === (string) $bookingSubCategoryId) ?? false;
-
-        if ($hasCategory && !$categoryMatched) {
-            return response()->json(response_formatter(DEFAULT_400, null, 'Selected serviceman is not assigned to this booking category'), 400);
+        if (count($validServicemen) !== 1) {
+            return response()->json(response_formatter(DEFAULT_400, null, 'Select one active, on-duty serviceman from your team'), 400);
         }
 
         $assigned = DB::transaction(function () use ($booking, $validServicemen, $provider, $request) {
@@ -2183,6 +2187,16 @@ class BookingController extends Controller
         $provider->save();
 
         return response()->json(response_formatter(DEFAULT_200, ['auto_assign_mode' => (int)$provider->auto_assign_mode]), 200);
+    }
+
+    /** Automatic dispatch may include any active technician of this provider. */
+    public function toggleAutoAssignAnyCategory(Request $request): JsonResponse
+    {
+        $provider = $request->user()->provider;
+        $provider->auto_assign_any_category = !$provider->auto_assign_any_category;
+        $provider->save();
+
+        return response()->json(response_formatter(DEFAULT_200, ['auto_assign_any_category' => (bool) $provider->auto_assign_any_category]), 200);
     }
 
     /**

@@ -3301,38 +3301,35 @@ if (!function_exists('dispatchNearestServicemanRequest')) {
             // "Book again with same serviceman": preferred serviceman ko pehle
             // chance — accept nahi kiya (decline/timeout) to slot tried list me
             // add ho chuka hai aur neeche normal nearest flow age badhega.
+            $allowAnyCategory = (bool) $provider->auto_assign_any_category;
             $preferredId = $booking->preferred_serviceman_id ?? null;
             if ($preferredId && !in_array($preferredId, $alreadyTried, true)) {
                 $bookingSubCategoryId = $booking->sub_category_id
                     ?? $booking->detail?->first()?->service?->sub_category_id
                     ?? null;
 
-                $preferred = Serviceman::with('user:id,fcm_token,current_language_key')
+                $preferredQuery = Serviceman::with('user:id,fcm_token,current_language_key')
                     ->where('id', $preferredId)
                     ->where('provider_id', $booking->provider_id)
                     ->whereHas('user', function ($query) {
                         $query->where('is_active', 1);
-                    })
-                    // Category filter (STRICT — same as findNearestServicemen):
-                    // preferred serviceman ki booking category assign honi chahiye.
-                    // Serviceman on duty hona zaroori hai warna next nearest ko jaayega.
-                    ->whereHas('servicemanCategories', function ($query) use ($bookingSubCategoryId) {
-                        $query->where('sub_category_id', $bookingSubCategoryId);
-                    })
-                    ->where('is_on_duty', 1)
-                    ->first();
+                    })->where('is_on_duty', 1);
+                if (!$allowAnyCategory) {
+                    $preferredQuery->whereHas('servicemanCategories', fn($query) => $query->where('sub_category_id', $bookingSubCategoryId));
+                }
+                $preferred = $preferredQuery->first();
                 if ($preferred) {
                     assignBookingToServiceman($booking, $preferred, $waitTime);
                     return;
                 }
             }
 
-            $candidates = findNearestServicemen($booking, $provider->id, $alreadyTried);
+            $candidates = findNearestServicemen($booking, $provider->id, $alreadyTried, $allowAnyCategory);
 
             if ($candidates->isEmpty()) {
                 // Nearest-to-farthest ek poora pass kisi ne accept nahi kiya:
                 // ab provider ke sab eligible servicemen ko ek saath request do.
-                $broadcastCandidates = findNearestServicemen($booking, $provider->id, []);
+                $broadcastCandidates = findNearestServicemen($booking, $provider->id, [], $allowAnyCategory);
                 if ($broadcastCandidates->isEmpty()) {
                     $booking->assignment_mode = 'manual_required';
                     $booking->saveQuietly();
@@ -3676,7 +3673,7 @@ if (!function_exists('findNearestServicemen')) {
      *  - already tried (rejected/expired/assigned) exclude
      *  - inactive user exclude
      */
-    function findNearestServicemen($booking, $providerId, array $excludeServicemanIds = [])
+    function findNearestServicemen($booking, $providerId, array $excludeServicemanIds = [], bool $allowAnyCategory = false)
     {
         [$bookingLat, $bookingLng] = getBookingCoordinates($booking);
 
@@ -3685,18 +3682,18 @@ if (!function_exists('findNearestServicemen')) {
             ?? $booking->detail?->first()?->service?->sub_category_id
             ?? null;
 
-        $baseQuery = function () use ($providerId, $excludeServicemanIds, $bookingSubCategoryId) {
-            return Serviceman::where('provider_id', $providerId)
+        $baseQuery = function () use ($providerId, $excludeServicemanIds, $bookingSubCategoryId, $allowAnyCategory) {
+            $query = Serviceman::where('provider_id', $providerId)
                 ->where('is_on_duty', 1)
                 ->whereNotIn('id', $excludeServicemanIds)
                 ->whereHas('user', function ($query) {
                     $query->where('is_active', 1);
                 })
-                // Only explicitly assigned category staff can receive a request.
-                ->whereHas('servicemanCategories', function ($query) use ($bookingSubCategoryId) {
-                    $query->where('sub_category_id', $bookingSubCategoryId);
-                })
                 ->with('user:id,fcm_token,current_language_key,first_name,last_name,profile_image,current_lat,current_lng,last_location_updated_at');
+            if (!$allowAnyCategory) {
+                $query->whereHas('servicemanCategories', fn($categoryQuery) => $categoryQuery->where('sub_category_id', $bookingSubCategoryId));
+            }
+            return $query;
         };
 
         // CAPACITY (W2.10): bounding-box pre-filter — poor provider ke 1000+
