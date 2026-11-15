@@ -1,5 +1,8 @@
 @php
     $sliderBanners = $sliderBanners ?? collect();
+    // Keep crop output below both PHP's configured upload size and a safe
+    // browser-to-server payload size, including multipart request overhead.
+    $sliderMaxUploadKb = max(1, min(900, (int) floor(uploadMaxFileSizeInKB('image') * 0.80)));
 @endphp
 
 {{-- =================== 1. AUTO SLIDE DURATION =================== --}}
@@ -76,18 +79,25 @@
                 <div class="col-md-4 col-12">
                     <label class="mb-2 text-dark">
                         {{ translate('Banner Image') }} <span class="text-danger">*</span>
-                        <span class="text-muted fz-11">(JPG, PNG, WEBP — {{ translate('recommended') }} 1200×500)</span>
                     </label>
+                    <div class="small text-muted mb-2" id="sliderImageSpecs">
+                        Customer app hero: full screen width × 400 dp. Crop ratio 1:1; saved image 1080 × 1080 px, compressed below {{ $sliderMaxUploadKb }} KB for reliable upload.
+                    </div>
                     <input type="file" name="slider_image" id="sliderImageInput"
                            class="form-control" accept="image/jpeg,image/png,image/webp,image/gif"
-                           required onchange="previewSliderImage(this)">
+                           required onchange="openSliderCropper(this)">
                 </div>
 
                 {{-- Preview + submit --}}
                 <div class="col-md-2 col-12 d-flex align-items-center gap-2">
-                    <img id="sliderPreview" src="#" alt="preview"
-                         class="rounded border d-none"
-                         style="height:42px;width:70px;object-fit:cover;">
+                    <div class="d-flex align-items-center gap-2 flex-grow-1">
+                        <img id="sliderPreview" src="#" alt="Cropped banner preview"
+                             class="rounded border d-none"
+                             style="height:42px;width:70px;object-fit:cover;">
+                        <button type="button" id="reopenSliderCrop" class="btn btn--secondary rounded text-nowrap" disabled>
+                            Crop image
+                        </button>
+                    </div>
                     <button type="submit" class="btn btn--primary demo_check w-100">
                         <i class="material-icons fz-18 align-middle">add_photo_alternate</i>
                         {{ translate('Add') }}
@@ -97,6 +107,31 @@
         </form>
     </div>
     @endcan
+
+    {{-- Crop banner to match the mobile home hero frame before upload. --}}
+    <div class="modal fade" id="sliderCropModal" tabindex="-1" aria-labelledby="sliderCropModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div>
+                        <h5 class="modal-title mb-1" id="sliderCropModalLabel">Crop home banner</h5>
+                        <p class="text-muted fz-12 mb-0">Adjust the image inside the 1:1 crop frame. The app displays this banner full width at 400 dp high.</p>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="slider-crop-stage">
+                        <img id="sliderCropImage" src="" alt="Crop home banner">
+                    </div>
+                    <p class="text-muted fz-12 mt-2 mb-0">Output: 1080 × 1080 px (1:1), compressed below {{ $sliderMaxUploadKb }} KB based on the server upload limit. Customer app display: full screen width × 400 dp, using cover fit. Keep important content near the center.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn--secondary rounded" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn--primary rounded" id="applySliderCrop">Crop &amp; Use Image</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     {{-- Banners grid --}}
     <div class="card-body p-20">
@@ -174,21 +209,165 @@
     </div>
 </div>
 
+<link rel="stylesheet" href="{{ asset('public/assets/admin-module/plugins/cropper/cropper.min.css') }}">
+<style>
+    .slider-crop-stage { height: min(62vh, 620px); min-height: 280px; overflow: hidden; border-radius: 10px; background: #f3f4f6; }
+    .slider-crop-stage > img { display: block; max-width: 100%; }
+</style>
+
 {{-- =================== JS =================== --}}
 @push('script')
+<script src="{{ asset('public/assets/admin-module/plugins/cropper/cropper.min.js') }}"></script>
 <script>
-    // Image preview before upload
-    function previewSliderImage(input) {
-        const preview = document.getElementById('sliderPreview');
-        if (input.files && input.files[0]) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                preview.src = e.target.result;
-                preview.classList.remove('d-none');
-            };
-            reader.readAsDataURL(input.files[0]);
+    let sliderCropper = null;
+    let sliderCropInput = null;
+    let sliderPendingFile = null;
+    let sliderCropSourceUrl = null;
+    let sliderPreviewUrl = null;
+    const sliderCropModalElement = document.getElementById('sliderCropModal');
+    const sliderCropModal = bootstrap.Modal.getOrCreateInstance(sliderCropModalElement);
+    const sliderCropImage = document.getElementById('sliderCropImage');
+    const sliderPreview = document.getElementById('sliderPreview');
+    const reopenSliderCrop = document.getElementById('reopenSliderCrop');
+
+    function openSliderCropper(input) {
+        if (!input.files || !input.files[0]) return;
+        if (sliderCropper) {
+            sliderCropper.destroy();
+            sliderCropper = null;
         }
+        if (sliderCropSourceUrl) URL.revokeObjectURL(sliderCropSourceUrl);
+        sliderCropInput = input;
+        sliderPendingFile = input.files[0];
+        input.dataset.cropReady = 'false';
+        reopenSliderCrop.disabled = false;
+        reopenSliderCrop.textContent = 'Crop image';
+        sliderCropSourceUrl = URL.createObjectURL(sliderPendingFile);
+        sliderCropImage.src = sliderCropSourceUrl;
+        sliderCropModal.show();
     }
+
+    reopenSliderCrop.addEventListener('click', function () {
+        openSliderCropper(document.getElementById('sliderImageInput'));
+    });
+
+    sliderCropModalElement.addEventListener('shown.bs.modal', function () {
+        if (sliderCropper) sliderCropper.destroy();
+        sliderCropper = new Cropper(sliderCropImage, {
+            aspectRatio: 1,
+            viewMode: 1,
+            autoCropArea: 0.94,
+            responsive: true,
+            background: false,
+            guides: true,
+            center: true,
+            movable: true,
+            zoomable: true,
+            cropBoxMovable: true,
+            cropBoxResizable: true,
+            minContainerWidth: 280,
+            minContainerHeight: 280,
+        });
+    });
+
+    async function createSliderUploadBlob(sourceCanvas) {
+        const maxBytes = {{ $sliderMaxUploadKb * 1024 }};
+        const encode = (canvas, quality) => new Promise(resolve =>
+            canvas.toBlob(resolve, 'image/jpeg', quality)
+        );
+
+        // Keep the full 1080px crop whenever possible; reduce JPEG quality only
+        // as much as required to stay below conservative PHP upload limits.
+        for (const quality of [0.84, 0.78, 0.72, 0.66, 0.60, 0.54, 0.48]) {
+            const blob = await encode(sourceCanvas, quality);
+            if (blob && blob.size <= maxBytes) return blob;
+        }
+
+        // Very detailed photos can still exceed the limit. Downscale safely
+        // while preserving the same square crop and composition.
+        for (const size of [960, 900, 840, 720]) {
+            const resized = document.createElement('canvas');
+            resized.width = size;
+            resized.height = size;
+            resized.getContext('2d').drawImage(sourceCanvas, 0, 0, size, size);
+            const blob = await encode(resized, 0.68);
+            if (blob && blob.size <= maxBytes) return blob;
+        }
+
+        return null;
+    }
+
+    document.getElementById('applySliderCrop').addEventListener('click', async function () {
+        if (!sliderCropper || !sliderCropInput || !sliderPendingFile) return;
+        const applyButton = this;
+        const canvas = sliderCropper.getCroppedCanvas({
+            width: 1080,
+            height: 1080,
+            imageSmoothingEnabled: true,
+            imageSmoothingQuality: 'high',
+            fillColor: '#ffffff',
+        });
+        if (!canvas) {
+            alert('Could not crop this image. Please choose another image.');
+            return;
+        }
+        applyButton.disabled = true;
+        try {
+            const blob = await createSliderUploadBlob(canvas);
+            if (!blob) {
+                alert('Could not prepare this image for upload. Please choose another image.');
+                return;
+            }
+            const baseName = sliderPendingFile.name.replace(/\.[^.]+$/, '') || 'home-banner';
+            const croppedFile = new File([blob], baseName + '_cropped.jpg', {
+                type: 'image/jpeg',
+                lastModified: Date.now(),
+            });
+            const transfer = new DataTransfer();
+            transfer.items.add(croppedFile);
+            sliderCropInput.files = transfer.files;
+            sliderCropInput.dataset.cropReady = 'true';
+            if (sliderPreviewUrl) URL.revokeObjectURL(sliderPreviewUrl);
+            sliderPreviewUrl = URL.createObjectURL(croppedFile);
+            sliderPreview.src = sliderPreviewUrl;
+            sliderPreview.classList.remove('d-none');
+            reopenSliderCrop.disabled = false;
+            reopenSliderCrop.textContent = 'Adjust crop';
+            sliderCropModal.hide();
+        } catch (error) {
+            console.error('Slider image compression failed:', error);
+            alert('Could not prepare this image for upload. Please try another image.');
+        } finally {
+            applyButton.disabled = false;
+        }
+    });
+
+    sliderCropModalElement.addEventListener('hidden.bs.modal', function () {
+        if (sliderCropper) {
+            sliderCropper.destroy();
+            sliderCropper = null;
+        }
+        if (sliderCropSourceUrl) {
+            URL.revokeObjectURL(sliderCropSourceUrl);
+            sliderCropSourceUrl = null;
+        }
+        if (sliderCropInput && sliderCropInput.dataset.cropReady !== 'true') {
+            sliderCropInput.value = '';
+            sliderPreview.classList.add('d-none');
+            reopenSliderCrop.disabled = true;
+            reopenSliderCrop.textContent = 'Crop image';
+        }
+        sliderCropInput = null;
+        sliderPendingFile = null;
+    });
+
+    document.getElementById('sliderUploadForm').addEventListener('submit', function (event) {
+        const input = document.getElementById('sliderImageInput');
+        if (!input.files.length || input.dataset.cropReady !== 'true') {
+            event.preventDefault();
+            alert('Please crop the banner image before uploading.');
+        }
+    });
 
     // Active toggle via AJAX
     document.querySelectorAll('.slider-toggle').forEach(function(toggle) {

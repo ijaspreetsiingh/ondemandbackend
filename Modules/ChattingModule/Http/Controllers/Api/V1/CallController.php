@@ -736,9 +736,26 @@ class CallController extends Controller
             return null;
         }
 
+        $appId = trim((string) $values['agora_app_id']);
+        $certificate = trim((string) $values['agora_app_certificate']);
+
+        // errInvalidToken ka sabse common reason yahi hai: admin panel me App ID
+        // ya Certificate galat/purana pada hai. Format bhi validate karo —
+        // dono 32 hex chars hote hain. Galat ho to call banne par bhi Agora
+        // join fail karega, isliye turant log me dikh jaye.
+        if (!preg_match('/^[0-9a-f]{32}$/i', $appId) || !preg_match('/^[0-9a-f]{32}$/i', $certificate)) {
+            \Illuminate\Support\Facades\Log::warning('call.agora credentials look invalid', [
+                'app_id_len' => strlen($appId),
+                'app_id_prefix' => mb_substr($appId, 0, 8),
+                'certificate_len' => strlen($certificate),
+                'certificate_prefix' => mb_substr($certificate, 0, 8),
+                'hint' => 'Agora App ID aur App Certificate dono 32 hex chars hote hain. Admin panel > Business Settings > 3rd Party > Agora me sahi values daalo (ya `php artisan agora:set` chalao).',
+            ]);
+        }
+
         return [
-            'app_id' => trim($values['agora_app_id']),
-            'certificate' => trim($values['agora_app_certificate']),
+            'app_id' => $appId,
+            'certificate' => $certificate,
         ];
     }
 

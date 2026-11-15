@@ -223,6 +223,10 @@ class CouponController extends Controller
             return response()->json(response_formatter(DEFAULT_400, null, error_processor($validator)), 400);
         }
 
+        // App se code trailing space / different case me aa sakta hai. Normalize
+        // karte hain warna exact-match query me coupon milta hi nahi.
+        $request->merge(['coupon_code' => trim((string)$request['coupon_code'])]);
+
         $cartItems = $this->cart->where(['customer_id' => $this->customer_user_id])->get();
         $typeWiseId = [];
         foreach ($cartItems as $item) {
@@ -250,7 +254,10 @@ class CouponController extends Controller
             $couponProviderIds = collect($coupon->discount->discount_types)->where('discount_type', 'provider')->pluck('type_wise_id');
             if ($couponProviderIds->isNotEmpty()) {
                 $cartProviderIds = $cartItems->pluck('provider_id')->filter()->unique();
-                if ($couponProviderIds->intersect($cartProviderIds)->isEmpty()) {
+                // Cart me provider abhi choose nahi hua ho to hard-fail mat karo —
+                // coupon apply allow karo; provider attribution booking time par
+                // cart ke provider_id se hogi (agar null hai to 0).
+                if ($cartProviderIds->isNotEmpty() && $couponProviderIds->intersect($cartProviderIds)->isEmpty()) {
                     return response()->json(response_formatter(COUPON_NOT_VALID_FOR_PROVIDER), 200);
                 }
             }
@@ -326,16 +333,21 @@ class CouponController extends Controller
 
         $totalUsedCount = $repeatCount;
 
-        if ($coupon->coupon_type != 'first_booking' && $totalUsedCount >= (int)($coupon->discount->limit_per_user ?? 0)) {
+        // `limit_per_user` ka DB default 0 hai. Pehle `used >= 0` hamesha true
+        // hota tha, isliye aise coupons KABHI apply nahi hote the. 0 (ya
+        // negative) ka matlab hai "koi per-user limit nahi".
+        $limitPerUser = (int)($coupon->discount->limit_per_user ?? 0);
+
+        if ($coupon->coupon_type != 'first_booking' && $limitPerUser > 0 && $totalUsedCount >= $limitPerUser) {
             return response()->json(response_formatter(COUPON_NOT_VALID_FOR_CART), 200);
         }
 
-        if ($coupon->coupon_type == 'first_booking') {
+        if ($coupon->coupon_type == 'first_booking' && $limitPerUser > 0) {
             $limit = $this->booking
                 ->where('customer_id', $this->customer_user_id)
                 ->where('booking_status', '!=', 'canceled')
                 ->count();
-            if ($limit >= (int)($coupon->discount->limit_per_user ?? 0)) {
+            if ($limit >= $limitPerUser) {
                 return response()->json(response_formatter(COUPON_NOT_VALID_FOR_CART), 200);
             }
         }

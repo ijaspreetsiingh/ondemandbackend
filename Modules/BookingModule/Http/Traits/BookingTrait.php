@@ -537,7 +537,13 @@ trait BookingTrait
 
                 $totalUsedCount = $repeatCount;
 
-                $maxCouponUsagePerUser = max(0, $coupon?->discount?->limit_per_user - $totalUsedCount);
+                // limit_per_user <= 0 ka matlab "unlimited". Pehle is case me
+                // max - used negative/0 ban jata tha aur poora coupon discount
+                // ₹0 ho jata tha — booking me user ko discount nahi milta tha.
+                $couponLimitPerUser = (int)($coupon?->discount?->limit_per_user ?? 0);
+                $maxCouponUsagePerUser = $couponLimitPerUser > 0
+                    ? max(0, $couponLimitPerUser - $totalUsedCount)
+                    : $totalDate;
                 $totalDiscount = 0;
                 if ($maxCouponUsagePerUser >= $totalDate){
                     $totalDiscount = $cartData->sum('coupon_discount') * $totalDate;

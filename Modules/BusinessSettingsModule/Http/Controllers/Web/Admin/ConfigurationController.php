@@ -724,6 +724,20 @@ class ConfigurationController extends Controller
     {
         $this->authorize('configuration_update');
 
+        $sliderImage = $request->file('slider_image');
+        if (!$sliderImage || !$sliderImage->isValid()) {
+            $uploadError = $sliderImage?->getError();
+            \Log::warning('Slider banner upload did not complete', [
+                'upload_error' => $uploadError,
+                'upload_error_message' => $sliderImage?->getErrorMessage(),
+            ]);
+            $message = in_array($uploadError, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)
+                ? 'The image is larger than the server upload limit. Please try the crop tool again.'
+                : 'The image upload did not complete. Please select the image and try again.';
+            Toastr::error(translate($message));
+            return back()->withInput();
+        }
+
         $request->validate([
             'slider_image' => 'required|image|max:' . uploadMaxFileSizeInKB('image') . '|mimes:' . implode(',', array_column(IMAGEEXTENSION, 'key')),
         ]);
@@ -733,7 +747,21 @@ class ConfigurationController extends Controller
         $banner->resource_type  = 'slider';   // special type — zone filter bypass hota hai
         $banner->resource_id    = null;
         $banner->redirect_link  = $request->input('redirect_link', null);
-        $banner->banner_image   = file_uploader('banner/', 'png', $request->file('slider_image'));
+        // Preserve the crop tool's compact JPEG and retain transparency when
+        // an admin uploads a PNG directly.
+        $sliderImageFormat = match (strtolower($sliderImage->getMimeType())) {
+            'image/png' => 'png',
+            'image/gif' => 'gif',
+            'image/webp' => 'webp',
+            default => 'jpg',
+        };
+        $bannerImageName = file_uploader('banner/', $sliderImageFormat, $sliderImage);
+        if (!$bannerImageName || $bannerImageName === 'def.png') {
+            Toastr::error(translate('The image could not be processed. Please select a JPG, PNG, or WEBP image and try again.'));
+            return back()->withInput();
+        }
+
+        $banner->banner_image = $bannerImageName;
         $banner->is_active      = 1;
         $banner->save();
 
