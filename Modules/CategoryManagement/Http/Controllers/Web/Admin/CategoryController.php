@@ -346,7 +346,7 @@ class CategoryController extends Controller
     {
         $request->validate([
             'status' => 'required|in:all,active,inactive',
-            'id' => 'required|uuid'
+            'id' => 'required'
         ]);
 
         $childes = $this->category->when($request['status'] != 'all', function ($query) use ($request) {

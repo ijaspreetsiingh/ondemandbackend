@@ -257,6 +257,10 @@ const App = (() => {
   }
 
   /* ---------------- location ---------------- */
+  let mapInstance = null;
+  let mapMarker = null;
+  let mapPicked = { lat: null, lng: null, label: '' };
+
   function openLocationSheet() {
     const body = openSheet(`
       <div class="sheet__head">
@@ -264,17 +268,30 @@ const App = (() => {
         <button class="iconbtn" data-close aria-label="Close">${icon('close', 18)}</button>
       </div>
       <div class="sheet__body">
-        <button class="btn btn--primary btn--block" id="use-gps">${icon('pin', 16)} Use my current location</button>
-        <div class="or-row"><span>or search your area</span></div>
-        <label class="searchfield">
-          ${icon('search', 16)}
-          <input class="input" id="loc-search" type="search" placeholder="Area, city, pincode…" autocomplete="off">
-        </label>
-        <div class="suggestions" id="loc-suggestions"></div>
-        ${state.isLoggedIn() ? `<div id="saved-locs" class="saved-locs"></div>` : ''}
+        <div class="locmap-wrap" id="locmap-wrap">
+          <div id="locmap" class="locmap"></div>
+        </div>
+        <div class="locform">
+          <button class="btn btn--primary btn--block" id="use-gps">${icon('pin', 16)} Use my current location</button>
+          <div class="or-row"><span>or search your area</span></div>
+          <label class="searchfield">
+            ${icon('search', 16)}
+            <input class="input" id="loc-search" type="search" placeholder="Area, city, pincode…" autocomplete="off">
+          </label>
+          <div class="suggestions" id="loc-suggestions"></div>
+          ${state.isLoggedIn() ? `<div id="saved-locs" class="saved-locs"></div>` : ''}
+          <div class="loc-actions" id="loc-actions" hidden>
+            <p class="loc-hint">Tap anywhere on the map to pick your exact spot</p>
+            <button class="btn btn--primary btn--block" id="use-map-pick">${icon('mapPin', 16)} Use this location</button>
+          </div>
+        </div>
       </div>`);
-    body.querySelector('[data-close]').onclick = closeSheet;
+    body.querySelector('[data-close]').onclick = () => { cleanupMap(); closeSheet(); };
     body.querySelector('#use-gps').onclick = useGps;
+    body.querySelector('#use-map-pick').onclick = useMapPick;
+
+    /* initialise map once the sheet is in the DOM (Leaflet needs size) */
+    setTimeout(() => initMap(), 50);
 
     const input = body.querySelector('#loc-search');
     let timer;
@@ -322,6 +339,65 @@ const App = (() => {
     }
   }
 
+  function initMap() {
+    if (mapInstance) return;
+    const el = $('#locmap');
+    if (!el) return;
+    mapInstance = L.map('locmap', { zoomControl: false, attributionControl: false }).setView([23.815, 77.201], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+    }).addTo(mapInstance);
+    mapMarker = L.marker([23.815, 77.201], { draggable: true }).addTo(mapInstance);
+    mapInstance.on('click', (e) => {
+      mapPicked = { lat: e.latlng.lat, lng: e.latlng.lng, label: '' };
+      mapMarker.setLatLng([e.latlng.lat, e.latlng.lng]);
+      const actions = $('#loc-actions');
+      if (actions) actions.hidden = false;
+    });
+    mapMarker.on('dragend', (e) => {
+      mapPicked = { lat: e.target.getLatLng().lat, lng: e.target.getLatLng().lng, label: '' };
+      const actions = $('#loc-actions');
+      if (actions) actions.hidden = false;
+    });
+  }
+
+  function cleanupMap() {
+    if (mapInstance) {
+      try { mapInstance.remove(); } catch (e) { /* ignore */ }
+      mapInstance = null;
+      mapMarker = null;
+    }
+  }
+
+  async function useMapPick() {
+    if (!mapPicked.lat || !mapPicked.lng) return;
+    try {
+      const res = await API.findZone(mapPicked.lat, mapPicked.lng);
+      const zone = res && res.content && res.content.zone;
+      if (!zone) {
+        toast('We are not serving this area yet. Try a nearby location.', 'error');
+        return;
+      }
+      state.zoneId = zone.id;
+      state.zoneName = zone.name;
+      state.setCoords(mapPicked.lat, mapPicked.lng);
+      state.address = {
+        address: mapPicked.label || zone.name,
+        lat: String(mapPicked.lat),
+        lon: String(mapPicked.lng),
+        zone_id: zone.id,
+        address_label: 'home',
+      };
+      cleanupMap();
+      closeSheet();
+      toast('Location set to ' + (mapPicked.label || zone.name), 'success');
+      refreshChrome();
+      route(true);
+    } catch (e) {
+      toast(e.message || 'This area is not serviceable yet.', 'error');
+    }
+  }
+
   async function useGps() {
     toast('Getting your location…');
     try {
@@ -340,6 +416,13 @@ const App = (() => {
       const lat = loc && (loc.latitude || loc.lat);
       const lng = loc && (loc.longitude || loc.lng);
       if (!lat || !lng) throw new Error('We could not locate that place');
+      if (mapInstance && mapMarker) {
+        mapMarker.setLatLng([lat, lng]);
+        mapInstance.setView([lat, lng], 15);
+        mapPicked = { lat, lng, label: text || '' };
+        const actions = $('#loc-actions');
+        if (actions) actions.hidden = false;
+      }
       await applyCoords(lat, lng, text);
     } catch (e) { toast(e.message, 'error'); }
   }
@@ -367,6 +450,7 @@ const App = (() => {
       zone_id: zone.id,
       address_label: 'home',
     };
+    cleanupMap();
     closeSheet();
     toast('Location set to ' + (label || zone.name), 'success');
     refreshChrome();
@@ -392,6 +476,7 @@ const App = (() => {
       zip_code: addr.zip_code,
       country: addr.country,
     };
+    cleanupMap();
     closeSheet();
     toast('Delivering to ' + (addr.address || '').split(',')[0], 'success');
     refreshChrome();
@@ -500,9 +585,9 @@ const App = (() => {
     });
 
     const sheet = $('#sheet');
-    sheet.addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
+    sheet.addEventListener('click', (e) => { if (e.target.id === 'sheet') { cleanupMap(); closeSheet(); } });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeSheet();
+      if (e.key === 'Escape') { cleanupMap(); closeSheet(); }
     });
 
     document.addEventListener('click', (e) => {

@@ -261,19 +261,24 @@ const UI = (() => {
     const price = priceOf(s);
     const old = oldPriceOf(s);
     const hasDiscount = old > price + 0.01;
+    const rating = ratingOf(s);
     return `<a class="scard ${compact ? 'scard--compact' : ''}" href="#/service/${esc(s.slug || s.id)}">
       <div class="scard__media">
         <img src="${esc(imgSrc(s.thumbnail_full_path || s.cover_image_full_path))}" alt="${esc(s.name)}" loading="lazy"
              onerror="this.onerror=null;this.src='${FALLBACK_IMG}'">
-        ${hasDiscount ? `<span class="scard__badge">Save ${Math.round((1 - price / old) * 100)}%</span>` : ''}
+        ${hasDiscount ? `<span class="scard__badge">-${Math.round((1 - price / old) * 100)}%</span>` : ''}
         ${s.is_favorite ? `<span class="scard__fav">${icon('heart', 14)}</span>` : ''}
+        ${rating ? `<span class="scard__rating">${icon('star', 12)} ${rating}</span>` : ''}
       </div>
       <div class="scard__body">
         <h4>${esc(s.name)}</h4>
         ${s.short_description ? `<p>${esc(s.short_description)}</p>` : ''}
         <div class="scard__foot">
-          <span class="price">${price > 0 ? money(price) : 'Get a quote'}${hasDiscount ? `<s>${money(old)}</s>` : ''}</span>
-          ${ratingOf(s) ? ratingInline(s) : `<span class="scard__link">View ${icon('arrowRight', 13)}</span>`}
+          <div class="scard__price">
+            <span class="price">${price > 0 ? money(price) : 'Get a quote'}</span>
+            ${hasDiscount ? `<s class="oldprice">${money(old)}</s>` : ''}
+          </div>
+          <span class="scard__cta">${icon('arrowRight', 14)}</span>
         </div>
       </div>
     </a>`;

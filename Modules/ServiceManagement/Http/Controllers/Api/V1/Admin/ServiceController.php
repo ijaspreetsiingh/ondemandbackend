@@ -75,8 +75,8 @@ class ServiceController extends Controller
 
         $validator = Validator::make($request->all(), [
             'name' => 'required',
-            'category_id' => 'required|uuid',
-            'sub_category_id' => 'required|uuid',
+            'category_id' => 'required|exists:categories,id',
+            'sub_category_id' => 'required|exists:categories,id',
             'cover_image' => 'required',
             'description' => 'required',
             'short_description' => 'required',
@@ -190,8 +190,8 @@ class ServiceController extends Controller
 
         $validator = Validator::make($request->all(), [
             'name' => 'required',
-            'category_id' => 'required|uuid',
-            'sub_category_id' => 'required|uuid',
+            'category_id' => 'required|exists:categories,id',
+            'sub_category_id' => 'required|exists:categories,id',
             'description' => 'required',
             'tax' => 'required|numeric|min:0',
             'variations' => 'required|array',

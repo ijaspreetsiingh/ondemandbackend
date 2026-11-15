@@ -98,7 +98,41 @@ class Booking extends Model
         're_service_of'
     ];
 
-    protected $appends = ['evidence_photos_full_path'];
+    protected $appends = ['evidence_photos_full_path', 'extra_fee_label'];
+
+    /**
+     * Booking fee (extra_fee) ka label — checkout par provider ka apna label
+     * (payment-config se) dikhta hai, to booking details/invoice me bhi wahi
+     * dikhna chahiye. Warna sab apps global label ("tex") dikha dete hain.
+     * null = app apna global label use kare.
+     */
+    protected static array $extraFeeLabelCache = [];
+
+
+    public function getExtraFeeLabelAttribute(): ?string
+    {
+        if ((float) ($this->extra_fee ?? 0) <= 0) {
+            return null;
+        }
+
+        $providerId = (string) ($this->provider_id ?? '');
+        if (array_key_exists($providerId, self::$extraFeeLabelCache)) {
+            return self::$extraFeeLabelCache[$providerId];
+        }
+
+        $label = null;
+        try {
+            $label = providerBookingFeeLabel($this->provider);
+            if ($label === null || trim($label) === '') {
+                $label = trim((string) (business_config('additional_charge_label_name', 'booking_setup')?->live_values ?? ''));
+                $label = $label !== '' ? $label : 'Booking Fee';
+            }
+        } catch (\Throwable $exception) {
+            $label = null;
+        }
+
+        return self::$extraFeeLabelCache[$providerId] = $label;
+    }
 
 
     public function service_address(): BelongsTo

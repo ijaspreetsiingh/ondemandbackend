@@ -114,8 +114,8 @@ class PostController extends Controller
             'service_description' => 'required',
             'booking_schedule' => 'required|date',
             'service_id' => 'required|uuid',
-            'category_id' => 'required|uuid',
-            'sub_category_id' => 'required|uuid',
+            'category_id' => 'required|exists:categories,id',
+            'sub_category_id' => 'required|exists:categories,id',
             'additional_instructions' => 'array',
             'service_address_id' => is_null($request['service_address']) ? 'required' : 'nullable',
             'service_address' => is_null($request['service_address_id']) ? [

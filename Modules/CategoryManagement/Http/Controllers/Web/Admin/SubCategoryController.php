@@ -86,7 +86,7 @@ class SubCategoryController extends Controller
         $request->validate([
             'name' => 'required|unique:categories',
             'name.0' => 'required',
-            'parent_id' => 'required|uuid',
+            'parent_id' => 'required|exists:categories,id',
             'short_description' => 'required',
             'short_description.0' => 'required',
             'image' => 'required|image|max:'. uploadMaxFileSizeInKB('image') .'|mimes:' . implode(',', array_column(IMAGEEXTENSION, 'key')),
@@ -210,7 +210,7 @@ class SubCategoryController extends Controller
         $request->validate([
             'name' => 'required|unique:categories,name,' . $id,
             'name.0' => 'required',
-            'parent_id' => 'required|uuid',
+            'parent_id' => 'required|exists:categories,id',
             'short_description' => 'required',
             'short_description.0' => 'required',
             'image' => 'image|max:'. uploadMaxFileSizeInKB('image') .'|mimes:' . implode(',', array_column(IMAGEEXTENSION, 'key')),

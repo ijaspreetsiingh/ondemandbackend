@@ -160,7 +160,7 @@ class ServiceController extends Controller
     public function updateSubscription(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'sub_category_id' => 'required|uuid'
+            'sub_category_id' => 'required|exists:categories,id'
         ]);
 
         if ($validator->fails()) {

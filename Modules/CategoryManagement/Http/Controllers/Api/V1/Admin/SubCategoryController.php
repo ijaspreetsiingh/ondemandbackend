@@ -75,7 +75,7 @@ class SubCategoryController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|unique:categories',
-            'parent_id' => 'required|uuid',
+            'parent_id' => 'required|exists:categories,id',
             'short_description' => 'required',
             'image' => 'required',
         ]);
@@ -130,7 +130,7 @@ class SubCategoryController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|unique:categories,name,' . $id,
-            'parent_id' => 'required|uuid',
+            'parent_id' => 'required|exists:categories,id',
             'short_description' => 'required',
         ]);
 

@@ -78,9 +78,40 @@ class BookingRepeat extends Model
         'serviceman_assign_expires_at',
     ];
 
-    protected $appends = ['evidence_photos_full_path', 'skipNotification'];
+    protected $appends = ['evidence_photos_full_path', 'skipNotification', 'extra_fee_label'];
 
     protected $hidden = ['skipNotification'];
+
+    protected static array $extraFeeLabelCache = [];
+
+    /**
+     * Repeat booking ka fee label — main booking jaisa hi (provider ka label,
+     * warna global), taaki details/invoice me sahi naam dikhe.
+     */
+    public function getExtraFeeLabelAttribute(): ?string
+    {
+        if ((float) ($this->extra_fee ?? 0) <= 0) {
+            return null;
+        }
+
+        $providerId = (string) ($this->provider_id ?? '');
+        if (array_key_exists($providerId, self::$extraFeeLabelCache)) {
+            return self::$extraFeeLabelCache[$providerId];
+        }
+
+        $label = null;
+        try {
+            $label = providerBookingFeeLabel($this->provider);
+            if ($label === null || trim($label) === '') {
+                $label = trim((string) (business_config('additional_charge_label_name', 'booking_setup')?->live_values ?? ''));
+                $label = $label !== '' ? $label : 'Booking Fee';
+            }
+        } catch (\Throwable $exception) {
+            $label = null;
+        }
+
+        return self::$extraFeeLabelCache[$providerId] = $label;
+    }
 
     public function getSkipNotificationAttribute()
     {

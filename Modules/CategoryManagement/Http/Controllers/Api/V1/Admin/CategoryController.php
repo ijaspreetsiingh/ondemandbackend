@@ -227,7 +227,7 @@ class CategoryController extends Controller
             'limit' => 'required|numeric|min:1|max:200',
             'offset' => 'required|numeric|min:1|max:100000',
             'status' => 'required|in:all,active,inactive',
-            'id' => 'required|uuid'
+            'id' => 'required'
         ]);
 
         if ($validator->fails()) {

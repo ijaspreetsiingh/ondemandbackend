@@ -937,6 +937,10 @@ window.Views = window.Views || {};
                   <small>${serviceman.user && serviceman.user.phone ? U.esc(serviceman.user.phone) : 'Assigned to your booking'}</small>
                 </div>
               </div>
+              <div class="procard__actions">
+                ${serviceman.user && serviceman.user.id ? `<button class="btn btn--ghost btn--sm" id="chat-sm">${U.icon('chat', 15)} Message</button>` : ''}
+                ${serviceman.user && serviceman.user.phone ? `<a class="btn btn--ghost btn--sm" href="tel:${U.esc(serviceman.user.phone)}">${U.icon('phone', 15)} Call</a>` : ''}
+              </div>
             </div>` : ''}
 
             <div class="card actions">
@@ -976,6 +980,23 @@ window.Views = window.Views || {};
           else U.toast((r && r.message) || 'Could not open the conversation', 'error');
         } catch (e) { U.toast(e.message, 'error'); }
         chatBtn.disabled = false;
+      };
+    }
+
+    const smChatBtn = view.querySelector('#chat-sm');
+    if (smChatBtn) {
+      const smUser = serviceman && serviceman.user;
+      const toUser = smUser && smUser.id;
+      smChatBtn.onclick = async () => {
+        if (!toUser) { U.toast('Messaging is not available for this technician', 'error'); return; }
+        smChatBtn.disabled = true;
+        try {
+          const r = await API.openChat(toUser, b.id, 'booking_id');
+          const channelId = r && r.content && (r.content.id || r.content.channel_id);
+          if (channelId) location.hash = '#/chat/' + channelId;
+          else U.toast((r && r.message) || 'Could not open the conversation', 'error');
+        } catch (e) { U.toast(e.message, 'error'); }
+        smChatBtn.disabled = false;
       };
     }
 

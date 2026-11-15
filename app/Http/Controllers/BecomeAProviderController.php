@@ -74,7 +74,7 @@ class BecomeAProviderController extends Controller
             'longitude' => 'nullable|numeric',
 
             'zone_id'          => 'required|uuid|exists:zones,id',
-            'main_category_id' => 'required|uuid|exists:categories,id',
+            'main_category_id' => 'required|exists:categories,id',
             // optional: empty chosen => pure main category considered
             'sub_category_ids'   => 'nullable|array',
             'sub_category_ids.*' => 'exists:categories,id',
