@@ -22,9 +22,19 @@ use App\Jobs\SendFcmPushJob;
     ];
     try {
         // TIMEOUT: FCM hang hone par web worker kabhi block nahi hoga
-        Http::withHeaders($headers)->timeout(10)->connectTimeout(5)->post($url, $data);
+        $response = Http::withHeaders($headers)->timeout(10)->connectTimeout(5)->post($url, $data);
+        // FCM error (UNREGISTERED / invalid token / auth) chupchaap ignore nahi hona chahiye,
+        // warna "notification nahi aa raha" debug karna namumkin ho jata hai.
+        if (method_exists($response, 'successful') && !$response->successful()) {
+            \Illuminate\Support\Facades\Log::warning('FCM push failed', [
+                'status' => $response->status(),
+                'body' => \Illuminate\Support\Str::limit((string) $response->body(), 500),
+            ]);
+            return false;
+        }
         return true;
-    }catch (\Exception){
+    }catch (\Exception $e){
+        \Illuminate\Support\Facades\Log::warning('FCM push exception: ' . $e->getMessage());
         return false;
     }
 }

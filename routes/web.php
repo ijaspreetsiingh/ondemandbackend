@@ -17,7 +17,14 @@ use App\Http\Controllers\InstallController;
 */
 
 Route::get('lang/{locale}', [LandingController::class, 'lang'])->name('lang');
-Route::get('/', [LandingController::class, 'home'])->name('home');
+
+// Customer web app is the site's landing page (the old static landing lives at /landing).
+Route::get('/', function () {
+    return response()->file(public_path('web-app/index.html'), [
+        'Cache-Control' => 'no-store, max-age=0',
+        'Content-Type' => 'text/html; charset=UTF-8',
+    ]);
+})->name('home');
 Route::get('page/contact-us', [LandingController::class, 'contactUs'])->name('page.contact-us');
 
 Route::get('business-page/{slug}', [LandingController::class, 'dynamicPage'])->name('business.page.dynamic');

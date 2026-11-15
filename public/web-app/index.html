@@ -4,39 +4,44 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Jass Booking — Book Trusted Home Service Professionals</title>
-  <meta name="description" content="Book verified professionals for carpentry, plumbing, electrical work, painting, AC repair and civil work — online, in minutes.">
-  <meta name="theme-color" content="#173c32">
+  <meta name="description" content="Book verified professionals for cleaning, plumbing, electrical, carpentry, painting, AC repair and more — upfront prices, trusted local experts, in minutes.">
+  <meta name="theme-color" content="#123c31">
   <link rel="icon" type="image/png" href="/landing/images/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/web-app/styles.css">
 </head>
 <body>
-  <!-- Splash while the config loads -->
+  <!-- Splash while the configuration loads -->
   <div id="boot" class="boot">
     <div class="boot-inner">
       <img src="/landing/images/logo-black.png" alt="Jass Booking" class="boot-logo">
-      <div class="boot-loader"></div>
+      <div class="boot-loader" aria-label="Loading"></div>
     </div>
   </div>
 
   <div id="app" class="app" hidden>
     <header class="topbar" id="topbar"></header>
-    <main class="view" id="view"></main>
-    <nav class="bottomnav" id="bottomnav"></nav>
+    <main class="view" id="view" tabindex="-1"></main>
+    <footer class="sitefooter" id="sitefooter"></footer>
+    <nav class="bottomnav" id="bottomnav" aria-label="Quick navigation"></nav>
   </div>
 
   <!-- Toasts -->
-  <div id="toasts" class="toasts"></div>
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- Load location sheet -->
+  <!-- Bottom sheet / modal -->
   <div id="sheet" class="sheet-backdrop" hidden>
-    <div class="sheet" id="sheet-body"></div>
+    <div class="sheet" id="sheet-body" role="dialog" aria-modal="true"></div>
   </div>
 
   <script>window.WEB_APP_API_BASE = '';</script>
   <script src="/web-app/js/api.js"></script>
+  <script src="/web-app/js/ui.js"></script>
+  <script src="/web-app/js/views-shop.js"></script>
+  <script src="/web-app/js/views-booking.js"></script>
+  <script src="/web-app/js/views-account.js"></script>
   <script src="/web-app/js/app.js"></script>
 </body>
 </html>

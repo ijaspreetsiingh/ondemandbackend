@@ -3517,7 +3517,7 @@ if (!function_exists('assignBookingToProvider')) {
                     device_notification(
                         $fcmToken,
                         $title,
-                        'auto_assign',
+                        'A new booking request is waiting for you. Assign servicemen before the timer ends.',
                         null,
                         $booking->id,
                         'new_booking_request',

@@ -1,853 +1,542 @@
 /* ============================================================
- * Jass Booking — web app (SPA, hash router)
- * Same APIs as the customer APK, built for phone + laptop browsers.
+ * Jass Booking — web app shell
+ * Boot, chrome (header / footer / bottom nav), hash router, location picker.
  * ============================================================ */
 'use strict';
 
 const App = (() => {
-  const { state, ok, money, E } = API;
+  const { state } = API;
+  const { $, $$, esc, icon, toast, openSheet, closeSheet } = UI;
 
-  /* ---------------- tiny helpers ---------------- */
-  const $ = (sel, root = document) => root.querySelector(sel);
-  const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const img = (src) => src ? esc(src) : '/landing/images/logo-black.png';
-
-  function toast(msg, type = 'info') {
-    const t = el(`<div class="toast toast--${type}">${esc(msg)}</div>`);
-    $('#toasts').appendChild(t);
-    setTimeout(() => t.classList.add('show'), 10);
-    setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2800);
-  }
-
-  function openSheet(html) { $('#sheet-body').innerHTML = html; $('#sheet').hidden = false; }
-  function closeSheet() { $('#sheet').hidden = true; $('#sheet-body').innerHTML = ''; }
-  document.addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
+  let booted = false;
+  let currentRoute = '';
 
   /* ---------------- boot ---------------- */
   async function boot() {
     try {
       const res = await API.getConfig();
-      if (res && ok(res)) state.config = res.content;
-      else throw new Error((res && res.message) || 'Could not load app config');
+      if (!API.ok(res)) throw new Error((res && res.message) || 'Could not load app configuration');
+      state.config = res.content;
+
+      const maintenance = res.content && res.content.maintenance;
+      const webDown = maintenance && Number(maintenance.maintenance_status) === 1 &&
+        maintenance.selected_maintenance_system && Number(maintenance.selected_maintenance_system.web_app) === 1;
+      if (webDown) {
+        showMaintenance(maintenance);
+        return;
+      }
     } catch (e) {
-      $('#boot').innerHTML = `<div class="boot-inner"><img class="boot-logo" src="/landing/images/logo-black.png" alt=""><p class="boot-err">Server se connect nahi ho paya.<br><small>${esc(e.message)}</small></p><button class="btn btn--primary" onclick="location.reload()">Retry</button></div>`;
+      $('#boot').innerHTML = `<div class="boot-inner">
+        <img class="boot-logo" src="/landing/images/logo-black.png" alt="">
+        <h2 class="boot-title">We couldn't reach the server</h2>
+        <p class="boot-err">${esc(e.message)}</p>
+        <button class="btn btn--primary" onclick="location.reload()">Try again</button>
+      </div>`;
       return;
     }
+
     $('#boot').remove();
     $('#app').hidden = false;
     renderChrome();
+    bindGlobalEvents();
+    if (state.token) API.refreshCartCount();
+    else API.refreshCartCount();
     route();
     window.addEventListener('hashchange', route);
+    booted = true;
   }
 
-  /* ---------------- chrome (topbar + bottom nav) ---------------- */
+  function showMaintenance(maintenance) {
+    const msg = (maintenance.maintenance_messages && maintenance.maintenance_messages.message_body) ||
+      'We are performing scheduled maintenance. Please check back shortly.';
+    const title = (maintenance.maintenance_messages && maintenance.maintenance_messages.maintenance_message) ||
+      'Be back soon';
+    document.getElementById('boot').innerHTML = `<div class="boot-inner maintenance">
+      <img class="boot-logo" src="${esc((state.config && state.config.logo_full_path) || '/landing/images/logo-black.png')}" alt="">
+      <h2 class="boot-title">${esc(title)}</h2>
+      <p class="boot-err">${esc(msg)}</p>
+      <button class="btn btn--ghost" onclick="location.reload()">Refresh</button>
+    </div>`;
+  }
+
+  /* ---------------- chrome ---------------- */
+  function logo() {
+    const cfg = state.config || {};
+    return `<img src="${esc(UI.imgSrc(cfg.logo_full_path))}" alt="${esc(cfg.business_name || 'Jass Booking')}" class="brand__img">`;
+  }
+
   function renderChrome() {
     const cfg = state.config || {};
+    const user = state.user;
     const addr = state.address;
-    const locLabel = addr ? (addr.address || '').split(',')[0] || 'Location' : 'Set location';
+    const locLabel = addr ? (addr.address || '').split(',')[0] || 'Your location' : 'Set location';
     const loggedIn = !!state.token;
 
     $('#topbar').innerHTML = `
       <div class="topbar__inner">
-        <a class="topbar__logo" href="#/"><img src="${esc(cfg.logo_full_path || '/landing/images/logo-black.png')}" alt="${esc(cfg.business_name || 'Jass Booking')}"><span>${esc(cfg.business_name || 'Jass Booking')}</span></a>
-        <button class="chip chip--loc" id="loc-chip" title="${esc(addr ? addr.address : 'Set your location')}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 1 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-          <span>${esc(locLabel)}</span>
+        <a class="brand" href="#/" aria-label="${esc(cfg.business_name || 'Jass Booking')} home">
+          ${logo()}
+          <span class="brand__name">${esc(cfg.business_name || 'Jass Booking')}</span>
+        </a>
+
+        <button class="locbtn" id="loc-chip" type="button">
+          ${icon('pin', 15)}
+          <span class="locbtn__text"><small>Service location</small><b>${esc(locLabel)}</b></span>
+          ${icon('chevronDown', 13)}
         </button>
-        <form class="topbar__search" id="search-form">
-          <input type="search" placeholder="Search services…" aria-label="Search services">
+
+        <nav class="mainnav" aria-label="Primary">
+          <a href="#/" data-nav="home">Explore</a>
+          <a href="#/categories" data-nav="categories">Services</a>
+          <a href="#/offers" data-nav="offers">Offers</a>
+          <a href="#/orders" data-nav="orders">My bookings</a>
+          <a href="#/support" data-nav="support">Support</a>
+        </nav>
+
+        <form class="searchbar" id="search-form" role="search">
+          ${icon('search', 16)}
+          <input type="search" name="q" placeholder="Search for a service…" aria-label="Search services" autocomplete="off">
         </form>
+
         <div class="topbar__actions">
-          <a class="iconbtn" href="#/cart" aria-label="Cart">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
-            <span class="badge" id="cart-badge" ${state.cartCount ? '' : 'hidden'}>${state.cartCount}</span>
+          <a class="iconbtn iconbtn--badge" href="#/cart" aria-label="Cart">
+            ${icon('cart', 20)}<span class="badge" id="cart-badge" ${state.cartCount ? '' : 'hidden'}>${state.cartCount}</span>
           </a>
-          <a class="btn btn--ghost btn--sm" href="${loggedIn ? '#/account' : '#/login'}">${loggedIn ? esc((state.user && (state.user.first_name || state.user.phone)) || 'Account') : 'Login'}</a>
+          ${loggedIn
+            ? `<a class="avatar" href="#/account" aria-label="Your account" title="${esc((user && user.first_name) || 'Account')}">${esc(UI.initials(user && user.first_name, user && user.last_name))}</a>`
+            : `<a class="btn btn--ghost btn--sm" href="#/login">Sign in</a>`}
         </div>
       </div>`;
 
     $('#bottomnav').innerHTML = `
-      <a href="#/" data-nav="home"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>Home</span></a>
-      <a href="#/orders" data-nav="orders"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span>Bookings</span></a>
-      <a href="#/cart" data-nav="cart"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg><span>Cart</span></a>
-      <a href="${loggedIn ? '#/account' : '#/login'}" data-nav="account"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>Account</span></a>`;
-
-    const desktopNav = el(`<nav class="topbar__nav" aria-label="Main navigation">
-      <a href="#/" data-desktop-nav="home">Explore</a>
-      <a href="#/orders" data-desktop-nav="orders">My bookings</a>
-    </nav>`);
-    $('#search-form').before(desktopNav);
+      <a href="#/" data-nav="home">${icon('home', 20)}<span>Home</span></a>
+      <a href="#/categories" data-nav="categories">${icon('grid', 20)}<span>Services</span></a>
+      <a href="#/cart" data-nav="cart" class="bottomnav__cart">${icon('cart', 20)}<span>Cart</span><i class="badge" id="cart-badge-m" ${state.cartCount ? '' : 'hidden'}>${state.cartCount}</i></a>
+      <a href="#/orders" data-nav="orders">${icon('calendar', 20)}<span>Bookings</span></a>
+      <a href="${loggedIn ? '#/account' : '#/login'}" data-nav="account">${icon('user', 20)}<span>Account</span></a>`;
 
     $('#loc-chip').onclick = openLocationSheet;
-    $('#search-form').onsubmit = (e) => {
+    const form = $('#search-form');
+    form.onsubmit = (e) => {
       e.preventDefault();
-      const q = e.target.querySelector('input').value.trim();
+      const q = form.querySelector('input').value.trim();
       if (q) location.hash = '#/search?q=' + encodeURIComponent(q);
     };
-    refreshBadge();
+    const searchInput = form.querySelector('input');
+    searchInput.onfocus = showSearchSuggestions;
+    renderFooter();
+    syncBadges();
   }
 
-  function refreshBadge() {
-    const b = $('#cart-badge');
-    if (b) { b.textContent = state.cartCount; b.hidden = !state.cartCount; }
+  function renderFooter() {
+    const host = $('#sitefooter');
+    if (!host) return;
+    const cfg = state.config || {};
+    const social = (cfg.social_media || []).filter(s => Number(s.status) === 1);
+    host.innerHTML = `<div class="sitefooter__inner">
+      <div class="sitefooter__brand">
+        ${logo()}
+        <p>Thoughtful help for a happier home. Verified professionals, upfront prices and service you can rely on.</p>
+        ${social.length ? `<div class="socials">${social.map(s => `<a class="social" href="${esc(s.link)}" target="_blank" rel="noopener">${esc(UI.titleCase(s.media))}</a>`).join('')}</div>` : ''}
+      </div>
+      <div class="sitefooter__col">
+        <h4>Explore</h4>
+        <a href="#/">Home</a>
+        <a href="#/categories">All services</a>
+        <a href="#/offers">Offers &amp; coupons</a>
+        <a href="#/track">Track a booking</a>
+      </div>
+      <div class="sitefooter__col">
+        <h4>Your account</h4>
+        <a href="#/orders">My bookings</a>
+        <a href="#/favorites">Saved services</a>
+        <a href="#/account/addresses">Saved addresses</a>
+        <a href="#/notifications">Notifications</a>
+      </div>
+      <div class="sitefooter__col">
+        <h4>Company</h4>
+        <a href="#/pages/about_us">About us</a>
+        <a href="#/pages/terms_and_conditions">Terms &amp; conditions</a>
+        <a href="#/pages/privacy_policy">Privacy policy</a>
+        <a href="#/pages/cancellation_policy">Cancellation policy</a>
+        <a href="#/become-a-provider">Become a provider</a>
+      </div>
+      <div class="sitefooter__col">
+        <h4>Contact</h4>
+        ${cfg.business_phone ? `<a href="tel:${esc(cfg.business_phone)}">${esc(cfg.business_phone)}</a>` : ''}
+        ${cfg.business_email ? `<a href="mailto:${esc(cfg.business_email)}">${esc(cfg.business_email)}</a>` : ''}
+        ${cfg.business_address ? `<span>${esc(cfg.business_address)}</span>` : ''}
+        <a href="#/support">Help &amp; support</a>
+      </div>
+    </div>
+    <div class="sitefooter__base">
+      <span>${esc(cfg.footer_text || ('© ' + new Date().getFullYear() + ' ' + (cfg.business_name || 'Jass Booking')))}</span>
+      <span>Made for homes that deserve better.</span>
+    </div>`;
+  }
+
+  function syncBadges() {
+    $$('#cart-badge, #cart-badge-m').forEach(b => {
+      b.textContent = state.cartCount;
+      b.hidden = !state.cartCount;
+    });
+    $$('[data-nav]').forEach(a => {
+      const key = a.dataset.nav;
+      const path = routeKey();
+      const active = key === 'home' ? (path === 'home')
+        : key === 'categories' ? (path === 'categories' || path === 'category' || path === 'service')
+        : key === 'cart' ? (path === 'cart' || path === 'checkout')
+        : key === 'orders' ? (path === 'orders' || path === 'order')
+        : key === 'account' ? (path.startsWith('account') || path === 'login' || path === 'signup')
+        : path === key;
+      a.classList.toggle('is-active', active);
+    });
+  }
+
+  function refreshChrome() {
+    renderChrome();
+  }
+
+  function onCartChanged() {
+    syncBadges();
+  }
+
+  /* ---------------- search suggestions ---------------- */
+  let suggestionBox = null;
+  let hintTimer = null;
+  async function showSearchSuggestions() {
+    const form = $('#search-form');
+    if (!form) return;
+    if (!suggestionBox) {
+      suggestionBox = UI.el(`<div class="searchpop" id="searchpop"></div>`);
+      form.appendChild(suggestionBox);
+      document.addEventListener('click', (e) => {
+        if (suggestionBox && !form.contains(e.target)) suggestionBox.classList.remove('is-open');
+      });
+    }
+    try {
+      const res = await API.searchHints();
+      const list = (res && res.content) || [];
+      const base = Array.isArray(list) ? list : [];
+      suggestionBox.innerHTML = base.slice(0, 8).map(item => `
+        <button type="button" class="searchpop__item" data-q="${esc(item.name || item)}">
+          ${icon('search', 14)} <span>${esc(item.name || item)}</span>
+        </button>`).join('');
+      $$('.searchpop__item', suggestionBox).forEach(btn => {
+        btn.onclick = () => {
+          location.hash = '#/search?q=' + encodeURIComponent(btn.dataset.q);
+          suggestionBox.classList.remove('is-open');
+          form.querySelector('input').value = btn.dataset.q;
+        };
+      });
+      suggestionBox.classList.add('is-open');
+    } catch (e) { /* hints are optional */ }
+    form.querySelector('input').oninput = (e) => {
+      clearTimeout(hintTimer);
+      const q = e.target.value.trim();
+      if (q.length < 2) return;
+      hintTimer = setTimeout(async () => {
+        try {
+          const r = await API.searchHints(q);
+          const items = ((r && r.content) || []).slice(0, 6);
+          if (!items.length) return;
+          suggestionBox.innerHTML = items.map(item => `
+            <button type="button" class="searchpop__item" data-q="${esc(item.name || item)}">
+              ${icon('search', 14)} <span>${esc(item.name || item)}</span>
+            </button>`).join('');
+          $$('.searchpop__item', suggestionBox).forEach(btn => {
+            btn.onclick = () => {
+              location.hash = '#/search?q=' + encodeURIComponent(btn.dataset.q);
+              suggestionBox.classList.remove('is-open');
+            };
+          });
+          suggestionBox.classList.add('is-open');
+        } catch (err) { /* ignore */ }
+      }, 280);
+    };
   }
 
   /* ---------------- location ---------------- */
   function openLocationSheet() {
-    openSheet(`
-      <div class="sheet__head"><h3>Set your location</h3><button class="iconbtn" id="sheet-close" aria-label="Close">✕</button></div>
+    const body = openSheet(`
+      <div class="sheet__head">
+        <div><span class="eyebrow">Where do you need help?</span><h3>Set your location</h3></div>
+        <button class="iconbtn" data-close aria-label="Close">${icon('close', 18)}</button>
+      </div>
       <div class="sheet__body">
-        <button class="btn btn--primary btn--block" id="use-gps">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 1.76 4.24 6 6 0 0 1-1.76 4.24M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14M7.76 16.24A6 6 0 0 1 6 12a6 6 0 0 1 1.76-4.24"/></svg>
-          Use my current location
-        </button>
+        <button class="btn btn--primary btn--block" id="use-gps">${icon('pin', 16)} Use my current location</button>
         <div class="or-row"><span>or search your area</span></div>
-        <input class="input" id="loc-search" type="search" placeholder="Search area, city…" autocomplete="off">
+        <label class="searchfield">
+          ${icon('search', 16)}
+          <input class="input" id="loc-search" type="search" placeholder="Area, city, pincode…" autocomplete="off">
+        </label>
         <div class="suggestions" id="loc-suggestions"></div>
+        ${state.isLoggedIn() ? `<div id="saved-locs" class="saved-locs"></div>` : ''}
       </div>`);
-    $('#sheet-close').onclick = closeSheet;
-    $('#use-gps').onclick = () => useGps();
-    const input = $('#loc-search');
+    body.querySelector('[data-close]').onclick = closeSheet;
+    body.querySelector('#use-gps').onclick = useGps;
+
+    const input = body.querySelector('#loc-search');
     let timer;
     input.oninput = () => {
       clearTimeout(timer);
       const q = input.value.trim();
-      if (q.length < 3) { $('#loc-suggestions').innerHTML = ''; return; }
+      const box = body.querySelector('#loc-suggestions');
+      if (q.length < 3) { box.innerHTML = ''; return; }
+      box.innerHTML = `<div class="suggestion suggestion--muted">Searching…</div>`;
       timer = setTimeout(async () => {
         try {
           const res = await API.geoSuggest(q);
           const list = (res.content && res.content.suggestions) || [];
-          $('#loc-suggestions').innerHTML = list.map(s => `
-            <button class="suggestion" data-place="${esc(s.placePrediction.placeId)}" data-text="${esc(s.placePrediction.text.text)}">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 1 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-              ${esc(s.placePrediction.text.text)}
-            </button>`).join('');
-          $('#loc-suggestions').querySelectorAll('.suggestion').forEach(btn => {
+          if (!list.length) { box.innerHTML = `<div class="suggestion suggestion--muted">No places found</div>`; return; }
+          box.innerHTML = list.map(s => {
+            const p = s.placePrediction || s;
+            const text = (p.text && p.text.text) || p.description || '';
+            return `<button class="suggestion" data-place="${esc(p.placeId || p.place_id)}" data-text="${esc(text)}">
+              ${icon('pin', 15)}<span>${esc(text)}</span></button>`;
+          }).join('');
+          $$('.suggestion[data-place]', box).forEach(btn => {
             btn.onclick = () => pickPlace(btn.dataset.place, btn.dataset.text);
           });
-        } catch (e) { toast(e.message, 'error'); }
-      }, 350);
+        } catch (e) {
+          box.innerHTML = `<div class="suggestion suggestion--muted">${esc(e.message)}</div>`;
+        }
+      }, 320);
     };
+
+    if (state.isLoggedIn()) {
+      API.getAddresses().then(res => {
+        const list = API.ok(res) ? ((res.content && res.content.data) || []) : [];
+        const host = body.querySelector('#saved-locs');
+        if (!host || !list.length) return;
+        host.innerHTML = `<div class="or-row"><span>or pick a saved address</span></div>` +
+          list.slice(0, 5).map(a => `<button class="suggestion" data-addr="${esc(a.id)}">
+            ${icon('mapPin', 15)}<span><b>${esc(a.address_label || 'Address')}</b> — ${esc(a.address || '')}</span></button>`).join('');
+        $$('[data-addr]', host).forEach(btn => {
+          btn.onclick = () => {
+            const addr = list.find(a => String(a.id) === String(btn.dataset.addr));
+            if (addr) applyAddress(addr);
+          };
+        });
+      }).catch(() => {});
+    }
   }
 
   async function useGps() {
     toast('Getting your location…');
     try {
-      const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 15000 }));
-      await applyCoords(pos.coords.latitude, pos.coords.longitude, 'Current location');
+      const pos = await new Promise((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 15000, enableHighAccuracy: true }));
+      await applyCoords(pos.coords.latitude, pos.coords.longitude);
     } catch (e) {
-      toast('Location permission denied. Please search your area instead.', 'error');
+      toast('Location access was blocked. Please search your area instead.', 'error');
     }
   }
 
   async function pickPlace(placeId, text) {
     try {
       const res = await API.geoSpot(placeId);
-      const loc = res.content && res.content.location;
-      if (!loc) throw new Error('Could not find that place');
-      await applyCoords(loc.latitude, loc.longitude, text);
+      const loc = res.content && (res.content.location || res.content);
+      const lat = loc && (loc.latitude || loc.lat);
+      const lng = loc && (loc.longitude || loc.lng);
+      if (!lat || !lng) throw new Error('We could not locate that place');
+      await applyCoords(lat, lng, text);
     } catch (e) { toast(e.message, 'error'); }
   }
 
   async function applyCoords(lat, lng, label) {
-    const res = await API.findZone(lat, lng);
-    if (!ok(res) || !res.content || !res.content.zone) {
-      toast('Service not available at this location yet.', 'error');
+    let zone = null;
+    try {
+      const res = await API.findZone(lat, lng);
+      zone = res && res.content && res.content.zone;
+      if (!zone) {
+        toast('We are not serving this area yet. Try a nearby location.', 'error');
+        return;
+      }
+    } catch (e) {
+      toast(e.message || 'This area is not serviceable yet.', 'error');
       return;
     }
-    state.zoneId = res.content.zone.id;
+    state.zoneId = zone.id;
+    state.zoneName = zone.name;
     state.setCoords(lat, lng);
     state.address = {
-      address: label || res.content.zone.name,
-      lat: String(lat), lon: String(lng),
-      zone_id: res.content.zone.id,
-      available_service_count: res.content.available_services_count,
+      address: label || zone.name,
+      lat: String(lat),
+      lon: String(lng),
+      zone_id: zone.id,
+      address_label: 'home',
     };
     closeSheet();
-    toast('Location set: ' + state.address.address);
-    renderChrome();
-    route();
+    toast('Location set to ' + (label || zone.name), 'success');
+    refreshChrome();
+    route(true);
+  }
+
+  function applyAddress(addr) {
+    state.zoneId = addr.zone_id || state.zoneId;
+    state.setCoords(addr.lat, addr.lon);
+    state.address = {
+      id: addr.id,
+      address: addr.address,
+      lat: addr.lat,
+      lon: addr.lon,
+      zone_id: addr.zone_id,
+      address_label: addr.address_label,
+      contact_person_name: addr.contact_person_name,
+      contact_person_number: addr.contact_person_number,
+      city: addr.city,
+      street: addr.street,
+      house: addr.house,
+      floor: addr.floor,
+      zip_code: addr.zip_code,
+      country: addr.country,
+    };
+    closeSheet();
+    toast('Delivering to ' + (addr.address || '').split(',')[0], 'success');
+    refreshChrome();
+    route(true);
   }
 
   /* ---------------- router ---------------- */
   function parseHash() {
     const raw = location.hash.replace(/^#\/?/, '');
-    const [path, qs] = raw.split('?');
-    const parts = path.split('/').filter(Boolean);
-    const params = {};
-    if (qs) new URLSearchParams(qs).forEach((v, k) => params[k] = v);
-    return { parts, params };
+    const [pathPart, queryPart] = raw.split('?');
+    const parts = pathPart.split('/').filter(Boolean).map(decodeURIComponent);
+    const query = {};
+    if (queryPart) new URLSearchParams(queryPart).forEach((v, k) => { query[k] = v; });
+    return { parts, query };
   }
 
-  async function route() {
-    const { parts, params } = parseHash();
-    const [p0, p1] = parts;
+  function routeKey() {
+    const { parts } = parseHash();
+    return parts[0] || 'home';
+  }
+
+  const TITLES = {
+    home: 'Home', categories: 'Services', category: 'Category', service: 'Service', search: 'Search',
+    offers: 'Offers', cart: 'Your cart', checkout: 'Checkout', orders: 'My bookings', order: 'Booking',
+    favorites: 'Saved services', account: 'Account', login: 'Sign in', signup: 'Create account',
+    forgot: 'Reset password', chat: 'Messages', notifications: 'Notifications', pages: 'Information',
+    support: 'Support', track: 'Track booking', 'payment-return': 'Payment', about: 'About us',
+    'become-a-provider': 'Become a provider',
+  };
+
+  async function route(force) {
+    const { parts, query } = parseHash();
+    const key = parts[0] || 'home';
     const view = $('#view');
-    document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === (p0 || 'home')));
-    document.querySelectorAll('[data-desktop-nav]').forEach(a => a.classList.toggle('active', a.dataset.desktopNav === (p0 || 'home')));
+    const signature = location.hash || '#/';
+    if (!force && signature === currentRoute) return;
+    currentRoute = signature;
+
+    document.body.dataset.route = key;
+    const base = (state.config && state.config.business_name) || 'Jass Booking';
+    document.title = `${TITLES[key] || 'Home'} · ${base}`;
+    syncBadges();
+    view.setAttribute('aria-busy', 'true');
 
     try {
-      if (!p0) await vHome(view);
-      else if (p0 === 'category' && p1) await vCategory(view, p1);
-      else if (p0 === 'service' && p1) await vService(view, p1);
-      else if (p0 === 'cart') await vCart(view);
-      else if (p0 === 'checkout') await vCheckout(view);
-      else if (p0 === 'orders') await vOrders(view);
-      else if (p0 === 'order' && p1) await vOrderDetail(view, p1);
-      else if (p0 === 'login') vLogin(view);
-      else if (p0 === 'signup') vSignup(view);
-      else if (p0 === 'account') await vAccount(view);
-      else if (p0 === 'search') await vSearch(view, params.q || '');
-      else vNotFound(view);
+      switch (key) {
+        case '': case 'home': await Views.home(view); break;
+        case 'categories': await Views.categories(view); break;
+        case 'category': await Views.category(view, parts[1]); break;
+        case 'service': await Views.service(view, parts[1]); break;
+        case 'search': await Views.search(view, query.q || '', query); break;
+        case 'offers': await Views.offers(view); break;
+        case 'cart': await Views.cart(view); break;
+        case 'checkout': await Views.checkout(view); break;
+        case 'orders': await Views.orders(view, query); break;
+        case 'order': await Views.order(view, parts[1]); break;
+        case 'favorites': await Views.favorites(view); break;
+        case 'account':
+          if (parts[1] === 'profile') await Views.profileEdit(view);
+          else if (parts[1] === 'addresses') await Views.addresses(view);
+          else if (parts[1] === 'wallet') await Views.wallet(view);
+          else await Views.account(view);
+          break;
+        case 'login': await Views.login(view, query); break;
+        case 'signup': await Views.signup(view, query); break;
+        case 'forgot': await Views.forgot(view); break;
+        case 'chat': await Views.chat(view, parts[1]); break;
+        case 'notifications': await Views.notifications(view); break;
+        case 'support': await Views.support(view); break;
+        case 'become-a-provider': await Views.becomeProvider(view); break;
+        case 'pages': await Views.page(view, parts[1]); break;
+        case 'about': await Views.page(view, 'about_us'); break;
+        case 'track': await Views.track(view, query); break;
+        case 'payment-return': await Views.paymentReturn(view, query); break;
+        default: Views.notFound(view);
+      }
     } catch (e) {
-      view.innerHTML = `<div class="page"><div class="empty"><p>Something went wrong.</p><small>${esc(e.message)}</small></div></div>`;
-    }
-    window.scrollTo({ top: 0 });
-  }
-
-  /* ---------------- shared widgets ---------------- */
-  function serviceCard(s) {
-    const v = s.variations_app_format && s.variations_app_format.zone_wise_variations || [];
-    const price = v.length ? Math.min(...v.map(x => Number(x.price) || 0)) : Number(s.min_bidding_price || 0);
-    const priceLabel = price > 0 ? money(price) : 'Get a quote';
-    const rate = Number(s.avg_rating || 0);
-    return `
-      <a class="scard" href="#/service/${esc(s.slug)}">
-        <div class="scard__img"><img src="${img(s.thumbnail_full_path)}" alt="${esc(s.name)}" loading="lazy" onerror="this.onerror=null;this.src='/landing/images/logo-black.png'"></div>
-        <div class="scard__body">
-          <h4>${esc(s.name)}</h4>
-          <p>${esc(s.short_description || '')}</p>
-          <div class="scard__foot">
-            <span class="price">${priceLabel}</span>
-            ${rate ? `<span class="rate">★ ${rate.toFixed(1)}</span>` : ''}
-          </div>
-        </div>
-      </a>`;
-  }
-
-  function section(title, items, more) {
-    if (!items || !items.length) return '';
-    return `
-      <section class="section">
-        <div class="section__head"><h2>${esc(title)}</h2>${more ? `<a href="${esc(more)}">See all ›</a>` : ''}</div>
-        <div class="hscroll">${items.map(serviceCard).join('')}</div>
-      </section>`;
-  }
-
-  /* ---------------- views ---------------- */
-  async function vHome(view) {
-    view.innerHTML = `<div class="page"><div class="skeletons">${'<div class="skel"></div>'.repeat(3)}</div></div>`;
-    const cfg = state.config || {};
-    let cats = [], popular = [], deals = [];
-    try { const r = await API.getCategories(); if (ok(r)) cats = (r.content && r.content.data) || []; } catch (e) {}
-    try { const r = await API.getPopular(); if (ok(r)) popular = (r.content && (r.content.data || r.content.serviceList)) || []; } catch (e) {}
-    try { const r = await API.getDeals(); if (ok(r)) deals = (r.content && (r.content.data || r.content.serviceList)) || []; } catch (e) {}
-
-    view.innerHTML = `
-      <div class="page">
-        <section class="hero">
-          <div class="hero__copy">
-            <span class="hero__eyebrow"><span class="hero__dot"></span> HOME SERVICES, MADE SIMPLE</span>
-            <h1>Good help.<br><em>Right at home.</em></h1>
-            <p>Book trusted professionals for the jobs that make your home feel like yours.</p>
-            <a class="btn btn--primary" href="#categories">Explore services <span aria-hidden="true">→</span></a>
-            <div class="hero__proof"><span class="hero__proof-icon">✓</span> Reliable local professionals <span class="hero__proof-sep">·</span> Clear, upfront pricing</div>
-          </div>
-          <div class="hero__visual" aria-hidden="true">
-            <div class="hero__orb hero__orb--one"></div><div class="hero__orb hero__orb--two"></div>
-            <div class="hero__home"><span class="hero__home-roof"></span><span class="hero__home-body"><i></i><i></i><b></b></span></div>
-            <div class="hero__float hero__float--top"><span>✦</span><div><strong>Home, sorted.</strong><small>One booking away</small></div></div>
-            <div class="hero__float hero__float--bottom"><span class="hero__check">✓</span><div><strong>Trusted service</strong><small>Made for your home</small></div></div>
-          </div>
-        </section>
-
-        <section class="section" id="categories">
-          <div class="section__head"><div><span class="section__eyebrow">WHAT CAN WE HELP WITH?</span><h2>Services for every corner</h2></div></div>
-          ${cats.length ? `<div class="catgrid">
-            ${cats.map(c => `
-              <a class="cat" href="#/category/${esc(c.slug)}">
-                <span class="cat__img"><img src="${img(c.image_full_path || c.thumbnailFullPath)}" alt="${esc(c.name)}" loading="lazy" onerror="this.onerror=null;this.src='/landing/images/logo-black.png'"></span>
-                <span class="cat__name">${esc(c.name)}</span>
-                <span class="cat__arrow" aria-hidden="true">↗</span>
-              </a>`).join('')}
-          </div>` : `<div class="empty empty--compact"><p>Services are getting ready</p><span>Try again in a little while, or explore our popular services below.</span></div>`}
-        </section>
-
-        ${section('Popular services', popular)}
-        ${section('Deals for you', deals)}
-
-        <section class="trustbar">
-          <div><span class="trustbar__icon">✓</span><span><strong>Trusted professionals</strong><small>People you can feel good about inviting in</small></span></div>
-          <div><span class="trustbar__icon">₹</span><span><strong>Clear pricing</strong><small>Know what to expect before you book</small></span></div>
-          <div><span class="trustbar__icon">↻</span><span><strong>Booking made easy</strong><small>Get the help you need, on your schedule</small></span></div>
-        </section>
-        <footer class="site-footer"><span>Jass Booking</span><span>Thoughtful help for a happier home.</span></footer>
-      </div>`;
-
-    const hero = view.querySelector('.hero a');
-    if (hero) hero.onclick = (e) => { e.preventDefault(); view.querySelector('#categories').scrollIntoView({ behavior: 'smooth' }); };
-  }
-
-  async function vCategory(view, slug) {
-    view.innerHTML = `<div class="page"><div class="skeletons">${'<div class="skel"></div>'.repeat(3)}</div></div>`;
-    let subs = [], active = null, page = 1, all = [];
-
-    const r = await API.getSubgroups(slug);
-    subs = ok(r) ? ((r.content && r.content.data) || []) : [];
-    if (!subs.length) { view.innerHTML = `<div class="page"><div class="empty">No services in this category yet.</div></div>`; return; }
-    active = subs[0].slug;
-
-    async function load() {
-      const res = await API.getServices(active, page);
-      const list = ok(res) ? ((res.content && (res.content.data || res.content.serviceList)) || []) : [];
-      all = page === 1 ? list : all.concat(list);
-      return list;
+      console.error(e);
+      view.innerHTML = `<div class="page">${UI.errorState(e, 'route-retry')}</div>`;
+      const retry = $('#route-retry');
+      if (retry) retry.onclick = () => route(true);
     }
 
-    function render() {
-      view.innerHTML = `
-        <div class="page">
-          <div class="chips">${subs.map(s => `<button class="chip ${s.slug === active ? 'chip--on' : ''}" data-slug="${esc(s.slug)}">${esc(s.name)}</button>`).join('')}</div>
-          <div class="grid" id="svc-grid">${all.map(serviceCard).join('')}</div>
-          <div class="loadmore"><button class="btn btn--ghost" id="more">Load more</button></div>
-        </div>`;
-      view.querySelectorAll('.chip').forEach(c => c.onclick = async () => {
-        active = c.dataset.slug; page = 1; await load(); render();
-      });
-      $('#more').onclick = async () => {
-        page += 1;
-        const list = await load();
-        if (!list.length) { toast('No more services'); $('#more').disabled = true; return; }
-        $('#svc-grid').insertAdjacentHTML('beforeend', list.map(serviceCard).join(''));
-      };
-    }
-
-    await load();
-    render();
-  }
-
-  async function vService(view, slug) {
-    view.innerHTML = `<div class="page"><div class="skeletons">${'<div class="skel"></div>'.repeat(3)}</div></div>`;
-    const res = await API.getServiceDetail(slug);
-    if (!ok(res) || !res.content) { view.innerHTML = `<div class="page"><div class="empty">Service not found.</div></div>`; return; }
-    const s = res.content;
-    const variants = (s.variations_app_format && s.variations_app_format.zone_wise_variations) || [];
-    let vIndex = 0, qty = 1;
-
-    view.innerHTML = `
-      <div class="page sd">
-        <div class="sd__media"><img src="${img(s.cover_image_full_path || s.thumbnail_full_path)}" alt="${esc(s.name)}" onerror="this.onerror=null;this.src='/landing/images/logo-black.png'"></div>
-        <div class="sd__head">
-          <h1>${esc(s.name)}</h1>
-          <p>${esc(s.short_description || '')}</p>
-          ${Number(s.avg_rating) ? `<span class="rate rate--lg">★ ${Number(s.avg_rating).toFixed(1)} (${s.rating_count || 0})</span>` : ''}
-        </div>
-        ${variants.length ? `
-        <div class="block">
-          <h3>Choose what you need</h3>
-          <div class="variants">${variants.map((v, i) => `
-            <label class="variant ${i === 0 ? 'on' : ''}" data-i="${i}">
-              <input type="radio" name="variant" ${i === 0 ? 'checked' : ''}>
-              <span class="variant__name">${esc(v.variant_name || v.variant_key)}</span>
-              <span class="variant__price">${money(v.price)}</span>
-            </label>`).join('')}</div>
-        </div>` : ''}
-        <div class="block">
-          <h3>Quantity</h3>
-          <div class="stepper">
-            <button id="q-dec">−</button><span id="q-val">1</span><button id="q-inc">+</button>
-          </div>
-        </div>
-        ${s.description ? `<div class="block"><h3>Details</h3><div class="prose">${s.description}</div></div>` : ''}
-        ${(s.faqs && s.faqs.length) ? `<div class="block"><h3>FAQs</h3>${s.faqs.map(f => `
-          <details class="faq"><summary>${esc(f.question || '')}</summary><p>${esc(f.answer || '')}</p></details>`).join('')}</div>` : ''}
-        <div class="buybar">
-          <div class="buybar__price" id="total-price"></div>
-          <button class="btn btn--primary" id="add-cart">Add to cart</button>
-        </div>
-      </div>`;
-
-    const currentPrice = () => variants.length ? Number(variants[vIndex].price || 0) : Number(s.min_bidding_price || 0);
-    const renderPrice = () => { $('#total-price').textContent = money(currentPrice() * qty) + (qty > 1 ? ` (${money(currentPrice())} × ${qty})` : ''); };
-    renderPrice();
-
-    view.querySelectorAll('.variant').forEach(l => l.onclick = () => {
-      vIndex = Number(l.dataset.i);
-      view.querySelectorAll('.variant').forEach(x => x.classList.remove('on'));
-      l.classList.add('on');
-      renderPrice();
-    });
-    $('#q-dec').onclick = () => { if (qty > 1) { qty--; $('#q-val').textContent = qty; renderPrice(); } };
-    $('#q-inc').onclick = () => { qty++; $('#q-val').textContent = qty; renderPrice(); };
-
-    $('#add-cart').onclick = async () => {
-      const v = variants[vIndex] || {};
-      try {
-        const res2 = await API.addToCart({
-          service_id: s.id,
-          category_id: s.category_id,
-          sub_category_id: s.sub_category_id,
-          variant_key: v.variant_key || '',
-          quantity: String(qty),
-        });
-        if (ok(res2)) {
-          const added = await API.getCart().catch(() => null);
-          const cartItems = added && added.content && added.content.cart && added.content.cart.data;
-          state.cartCount = Array.isArray(cartItems)
-            ? cartItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
-            : state.cartCount + qty;
-          refreshBadge();
-          toast('Added to cart', 'success');
-        } else {
-          toast(res2.message || 'Could not add to cart', 'error');
-        }
-      } catch (e) { toast(e.message, 'error'); }
-    };
-  }
-
-  async function vCart(view) {
-    view.innerHTML = `<div class="page"><div class="skeletons">${'<div class="skel"></div>'.repeat(3)}</div></div>`;
-    const res = await API.getCart();
-    if (!ok(res)) { view.innerHTML = `<div class="page"><div class="empty">Cart nahi load hui — ${esc(res.message || 'try again')}</div></div>`; return; }
-    const items = (res.content && res.content.cart && res.content.cart.data) || [];
-    if (!items.length) {
-      view.innerHTML = `<div class="page"><div class="empty"><p>Your cart is empty.</p><a class="btn btn--primary" href="#/">Browse services</a></div></div>`;
-      return;
-    }
-    const bill = res.content || {};
-
-    view.innerHTML = `
-      <div class="page">
-        <h1 class="pagetitle">Your cart</h1>
-        <div class="cartlist">
-          ${items.map(i => `
-            <div class="citem" data-id="${esc(i.id)}">
-              <img class="citem__img" src="${img(i.service && i.service.thumbnail_full_path)}" alt="" onerror="this.onerror=null;this.src='/landing/images/logo-black.png'">
-              <div class="citem__body">
-                <h4>${esc(i.service && i.service.name || '')}</h4>
-                <p>${esc((i.variant_key || '').replaceAll('-', ' '))}</p>
-                <div class="citem__row">
-                  <span class="price">${money(i.total_cost)}</span>
-                  <div class="stepper stepper--sm">
-                    <button data-act="dec" data-id="${esc(i.id)}" data-q="${Math.max(1, (i.quantity || 1) - 1)}">−</button>
-                    <span>${i.quantity || 1}</span>
-                    <button data-act="inc" data-id="${esc(i.id)}" data-q="${(i.quantity || 1) + 1}">+</button>
-                  </div>
-                </div>
-              </div>
-              <button class="citem__del" data-act="del" data-id="${esc(i.id)}" aria-label="Remove">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
-              </button>
-            </div>`).join('')}
-        </div>
-        <div class="bill">
-          <div><span>Total</span><strong>${money(bill.total_cost)}</strong></div>
-        </div>
-        <div class="page__cta">
-          <button class="btn btn--ghost" id="wipe">Clear cart</button>
-          <button class="btn btn--primary btn--block" id="to-checkout">Continue to checkout</button>
-        </div>
-      </div>`;
-
-    view.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
-      const { act, id, q } = b.dataset;
-      try {
-        if (act === 'del') await API.removeCartItem(id);
-        else if (act === 'wipe') await API.wipeCart();
-        else await API.updateQty(id, Number(q));
-        await vCart(view);
-        const cnt = await API.getCart();
-        const n = ((cnt.content && cnt.content.cart && cnt.content.cart.data) || []).reduce((s, x) => s + (Number(x.quantity) || 0), 0);
-        state.cartCount = n; refreshBadge();
-      } catch (e) { toast(e.message, 'error'); }
-    });
-    $('#to-checkout').onclick = () => location.hash = '#/checkout';
-    $('#wipe').onclick = async () => { try { await API.wipeCart(); state.cartCount = 0; refreshBadge(); vCart(view); } catch (e) { toast(e.message, 'error'); } };
-  }
-
-  async function vCheckout(view) {
-    view.innerHTML = `<div class="page"><div class="skeletons">${'<div class="skel"></div>'.repeat(3)}</div></div>`;
-
-    /* cart must exist */
-    const cartRes = await API.getCart();
-    const items = (cartRes.content && cartRes.content.cart && cartRes.content.cart.data) || [];
-    if (!items.length) { location.hash = '#/cart'; return; }
-
-    /* saved addresses */
-    let addresses = [];
-    try { const r = await API.getAddresses(); if (ok(r)) addresses = (r.content && (r.content.data || r.content.addresses)) || []; } catch (e) {}
-    let selected = addresses[0] || null;
-
-    /* payment config */
-    let payCfg = {};
-    try { const r = await API.paymentConfig(''); if (ok(r)) payCfg = r.content || {}; } catch (e) {}
-    const codOk = payCfg.cash_after_service === undefined ? true : !!Number(payCfg.cash_after_service);
-
-    let schedule = null; // null = ASAP
-
-    view.innerHTML = `
-      <div class="page">
-        <h1 class="pagetitle">Checkout</h1>
-
-        <div class="block">
-          <h3>Service address</h3>
-          <div id="addr-list">${addresses.map((a, i) => `
-            <label class="sel ${i === 0 ? 'on' : ''}" data-i="${i}">
-              <input type="radio" name="addr" ${i === 0 ? 'checked' : ''}>
-              <div><strong>${esc(a.contact_person_name || a.address_label || 'Address')}</strong><p>${esc(a.address || '')}</p></div>
-            </label>`).join('')}</div>
-          <button class="btn btn--ghost btn--block" id="add-addr">+ Add new address</button>
-        </div>
-
-        <div class="block">
-          <h3>Schedule</h3>
-          <div class="chips" id="sched-chips">
-            <button class="chip chip--on" data-s="asap">As soon as possible</button>
-            <button class="chip" data-s="custom">Schedule for later</button>
-          </div>
-          <div id="sched-custom" hidden>
-            <label class="field-label" for="sched-date">Choose a date</label>
-            <input class="input" type="date" id="sched-date">
-            <label class="field-label" for="sched-time">Choose a time</label>
-            <input class="input" type="time" id="sched-time">
-          </div>
-        </div>
-
-        <div class="block">
-          <h3>Coupon</h3>
-          <div class="inline-form">
-            <input class="input" id="coupon-code" placeholder="Coupon code">
-            <button class="btn btn--ghost" id="apply-coupon">Apply</button>
-          </div>
-          <p class="hint" id="coupon-msg"></p>
-        </div>
-
-        <div class="block">
-          <h3>Payment</h3>
-          <label class="sel on"><input type="radio" name="pay" checked><div><strong>Cash after service</strong><p>Pay when the job is done</p></div></label>
-          <p class="hint">Pay your professional after the service is complete.</p>
-        </div>
-
-        <div class="bill">
-          <div><span>To pay</span><strong>${money(cartRes.content && cartRes.content.total_cost)}</strong></div>
-        </div>
-        <div class="page__cta">
-          <button class="btn btn--primary btn--block" id="place" ${codOk ? '' : 'disabled'}>Place booking</button>
-        </div>
-      </div>`;
-
-    $('#sched-date').min = new Date().toISOString().slice(0, 10);
-
-    /* address selection */
-    view.querySelectorAll('.sel[data-i]').forEach(l => l.onclick = () => {
-      view.querySelectorAll('.sel[data-i]').forEach(x => x.classList.remove('on'));
-      l.classList.add('on');
-      selected = addresses[Number(l.dataset.i)];
-    });
-    $('#add-addr').onclick = () => addressForm(async (model) => {
-      const res = await API.addAddress(model);
-      if (ok(res)) { closeSheet(); toast('Address saved', 'success'); await vCheckout(view); }
-      else toast(res.message || 'Could not save address', 'error');
-    });
-
-    /* schedule */
-    view.querySelectorAll('#sched-chips .chip').forEach(c => c.onclick = () => {
-      view.querySelectorAll('#sched-chips .chip').forEach(x => x.classList.remove('chip--on'));
-      c.classList.add('chip--on');
-      if (c.dataset.s === 'asap') { schedule = null; $('#sched-custom').hidden = true; }
-      else { $('#sched-custom').hidden = false; }
-    });
-
-    /* coupon */
-    $('#apply-coupon').onclick = async () => {
-      const code = $('#coupon-code').value.trim();
-      if (!code) return;
-      try {
-        const r = await API.applyCoupon(code);
-        if (ok(r)) { $('#coupon-msg').textContent = 'Coupon applied ✓'; $('#coupon-msg').className = 'hint hint--ok'; }
-        else { $('#coupon-msg').textContent = r.message || 'Invalid coupon'; $('#coupon-msg').className = 'hint hint--err'; }
-      } catch (e) { $('#coupon-msg').textContent = e.message; $('#coupon-msg').className = 'hint hint--err'; }
-    };
-
-    /* place order */
-    $('#place').onclick = async () => {
-      if (!selected && addresses.length === 0 && !state.address) {
-        toast('Please add a service address', 'error');
-        return;
-      }
-      let sched = null;
-      if ($('#sched-custom').hidden === false) {
-        const d = $('#sched-date').value, t = $('#sched-time').value;
-        if (!d || !t) { toast('Pick date and time', 'error'); return; }
-        const chosen = new Date(d + 'T' + t);
-        if (Number.isNaN(chosen.getTime()) || chosen.getTime() <= Date.now()) { toast('Choose a future date and time', 'error'); return; }
-        sched = d + ' ' + (t.length === 5 ? t + ':00' : t);
-      } else {
-        // ASAP — backend requires a schedule for regular service; send now + 30 min
-        const now = new Date(Date.now() + 30 * 60000);
-        const pad = (n) => String(n).padStart(2, '0');
-        sched = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':00';
-      }
-
-      const addr = selected || state.address;
-      const addressModel = {
-        id: addr && addr.id || null,
-        address_type: addr && addr.address_type || 'service',
-        address_label: addr && (addr.address_label || 'home') || 'home',
-        contact_person_name: addr && addr.contact_person_name || '',
-        contact_person_number: addr && addr.contact_person_number || '',
-        address: addr && addr.address || '',
-        lat: addr && (addr.lat || addr.latitude) || state.lat,
-        lon: addr && (addr.lon || addr.longitude) || state.lng,
-        city: addr && addr.city || '',
-        zip_code: addr && addr.zip_code || '',
-        country: addr && addr.country || '',
-        zone_id: state.zoneId,
-        street: addr && addr.street || '',
-        house: addr && addr.house || '',
-        floor: addr && addr.floor || '',
-        available_service_count: addr && addr.available_service_count || null,
-      };
-
-      const btn = $('#place');
-      btn.disabled = true; btn.textContent = 'Placing…';
-      try {
-        const res = await API.placeOrder({
-          payment_method: 'cash_after_service',
-          zone_id: state.zoneId,
-          service_schedule: sched,
-          service_address_id: (addr && addr.id && addr.id !== 'null') ? addr.id : null,
-          service_address: JSON.stringify(addressModel),
-          is_partial: 0,
-          service_type: 'regular',
-          booking_type: 'daily',
-          dates: null,
-          service_location: 'customer',
-        });
-        if (ok(res) || res.response_code === 'booking_place_success_200') {
-          if (res.content && res.content.token) { state.token = res.content.token; state.user = res.content.user || null; }
-          const n = await API.getCart();
-          state.cartCount = ((n.content && n.content.cart && n.content.cart.data) || []).reduce((s, x) => s + (Number(x.quantity) || 0), 0);
-          refreshBadge();
-          const rid = res.content && (res.content.readable_id || (res.content.booking_id && res.content.booking_id[0]));
-          view.innerHTML = `<div class="page"><div class="success">
-            <div class="success__icon">✓</div>
-            <h1>Booking placed!</h1>
-            <p>Your booking ID is <strong>${esc(rid || '—')}</strong>.<br>We're assigning a professional to your job.</p>
-            <a class="btn btn--primary" href="#/orders">View my bookings</a>
-            <a class="btn btn--ghost" href="#/">Keep browsing</a>
-          </div></div>`;
-        } else {
-          toast(res.message || 'Booking failed', 'error');
-          btn.disabled = false; btn.textContent = 'Place booking';
-        }
-      } catch (e) {
-        toast(e.message, 'error');
-        btn.disabled = false; btn.textContent = 'Place booking';
-      }
-    };
-
-    if (!codOk) { /* config says COD off — still show but warn */
-      const p = view.querySelector('.block:last-of-type p.hint');
-      if (p) p.textContent = 'Cash payment is unavailable right now. Please choose a different payment option in the customer app.';
-    }
-  }
-
-  function addressForm(onSave) {
-    openSheet(`
-      <div class="sheet__head"><h3>Add address</h3><button class="iconbtn" id="sheet-close">✕</button></div>
-      <div class="sheet__body">
-        <input class="input" id="af-name" placeholder="Contact name">
-        <input class="input" id="af-phone" placeholder="Phone number" inputmode="tel">
-        <input class="input" id="af-house" placeholder="House / flat no.">
-        <input class="input" id="af-street" placeholder="Street / area">
-        <input class="input" id="af-address" placeholder="Full address" required>
-        <input class="input" id="af-city" placeholder="City">
-        <input class="input" id="af-zip" placeholder="Pincode" inputmode="numeric">
-        <button class="btn btn--primary btn--block" id="af-save">Save address</button>
-      </div>`);
-    $('#sheet-close').onclick = closeSheet;
-    $('#af-save').onclick = () => {
-      const address = $('#af-address').value.trim();
-      if (!address) { toast('Address is required', 'error'); return; }
-      onSave({
-        address_type: 'service',
-        address_label: 'home',
-        contact_person_name: $('#af-name').value.trim(),
-        contact_person_number: $('#af-phone').value.trim(),
-        address,
-        lat: state.lat || '',
-        lon: state.lng || '',
-        city: $('#af-city').value.trim(),
-        zip_code: $('#af-zip').value.trim(),
-        country: '',
-        zone_id: state.zoneId,
-        street: $('#af-street').value.trim(),
-        house: $('#af-house').value.trim(),
-        floor: '',
-      });
-    };
-  }
-
-  async function vOrders(view) {
-    view.innerHTML = `<div class="page"><div class="skeletons">${'<div class="skel"></div>'.repeat(2)}</div></div>`;
-    let list = [];
-    try {
-      const r = await API.getOrders();
-      list = ok(r) ? ((r.content && (r.content.data || r.content.orders)) || []) : [];
-    } catch (e) { /* guest without bookings */ }
-    if (!list.length) {
-      view.innerHTML = `<div class="page"><div class="empty"><p>No bookings yet.</p><a class="btn btn--primary" href="#/">Book a service</a></div></div>`;
-      return;
-    }
-    view.innerHTML = `
-      <div class="page">
-        <h1 class="pagetitle">My bookings</h1>
-        <div class="orderlist">
-          ${list.map(b => `
-            <a class="ocard" href="#/order/${esc(b.id)}">
-              <div><strong>#${esc(b.readable_id || b.id)}</strong><p>${esc((b.service_name || (b.services && b.services.map(s => s.service_name).join(', ')) || b.booking_type || ''))}</p></div>
-              <div class="ocard__side">
-                <span class="ostatus">${esc((b.booking_status || b.status || '').replaceAll('_', ' '))}</span>
-                <span class="price">${money(b.total_amount || b.total_cost)}</span>
-              </div>
-            </a>`).join('')}
-        </div>
-      </div>`;
-  }
-
-  async function vOrderDetail(view, id) {
-    view.innerHTML = `<div class="page"><div class="skeletons">${'<div class="skel"></div>'.repeat(2)}</div></div>`;
-    let b = null;
-    try {
-      const r = await API.getOrderDetails(id);
-      if (ok(r)) b = r.content;
-    } catch (e) {}
-    if (!b) { view.innerHTML = `<div class="page"><div class="empty">Booking details nahi mile.</div></div>`; return; }
-    const main = b.booking || b;
-    view.innerHTML = `
-      <div class="page">
-        <h1 class="pagetitle">Booking #${esc(main.readable_id || main.id)}</h1>
-        <div class="block"><h3>Status</h3><span class="ostatus">${esc((main.booking_status || main.status || '').replaceAll('_', ' '))}</span></div>
-        <div class="block"><h3>Amount</h3><span class="price price--lg">${money(main.total_amount || main.total_cost)}</span></div>
-        ${(main.service_address || main.address) ? `<div class="block"><h3>Address</h3><p>${esc(typeof (main.service_address || main.address) === 'string' ? (main.service_address || main.address) : (main.service_address || main.address).address || '')}</p></div>` : ''}
-        ${(main.services || []).length ? `<div class="block"><h3>Services</h3>${main.services.map(s => `<p>${esc(s.service_name || s.name || '')} × ${esc(s.quantity || 1)} — ${money(s.total_cost || s.service_cost)}</p>`).join('')}</div>` : ''}
-        <div class="page__cta"><a class="btn btn--ghost" href="#/orders">← All bookings</a></div>
-      </div>`;
+    view.removeAttribute('aria-busy');
+    UI.scrollToTop();
   }
 
   /* ---------------- auth ---------------- */
-  function vLogin(view) {
-    view.innerHTML = `
-      <div class="page page--narrow">
-        <h1 class="pagetitle">Welcome back</h1>
-        <div class="block">
-          <input class="input" id="lg-phone" placeholder="Phone number" inputmode="tel">
-          <input class="input" id="lg-pass" type="password" placeholder="Password">
-          <button class="btn btn--primary btn--block" id="lg-go">Log in</button>
-          <p class="hint">New here? <a href="#/signup">Create an account</a></p>
-        </div>
-      </div>`;
-    $('#lg-go').onclick = async () => {
-      const phone = $('#lg-phone').value.trim(), pass = $('#lg-pass').value;
-      if (!phone || !pass) { toast('Phone and password required', 'error'); return; }
-      try {
-        const r = await API.signin(phone, pass, 'phone');
-        if (ok(r) && r.content) {
-          state.token = r.content.token || '';
-          state.user = r.content.user || null;
-          toast('Welcome, ' + ((r.content.user && r.content.user.first_name) || '') , 'success');
-          renderChrome();
-          location.hash = '#/';
-        } else toast(r.message || 'Login failed', 'error');
-      } catch (e) { toast(e.message, 'error'); }
-    };
+  function requireAuth(nextHash) {
+    if (state.isLoggedIn()) return true;
+    const next = nextHash || (location.hash || '#/');
+    location.hash = '#/login?next=' + encodeURIComponent(next);
+    toast('Please sign in to continue', 'info');
+    return false;
   }
 
-  function vSignup(view) {
-    view.innerHTML = `
-      <div class="page page--narrow">
-        <h1 class="pagetitle">Create account</h1>
-        <div class="block">
-          <input class="input" id="su-fn" placeholder="First name">
-          <input class="input" id="su-ln" placeholder="Last name">
-          <input class="input" id="su-phone" placeholder="Phone number" inputmode="tel">
-          <input class="input" id="su-email" placeholder="Email (optional)">
-          <input class="input" id="su-pass" type="password" placeholder="Password">
-          <input class="input" id="su-pass2" type="password" placeholder="Confirm password">
-          <button class="btn btn--primary btn--block" id="su-go">Sign up</button>
-          <p class="hint">Already have an account? <a href="#/login">Log in</a></p>
-        </div>
-      </div>`;
-    $('#su-go').onclick = async () => {
-      const body = {
-        first_name: $('#su-fn').value.trim(),
-        last_name: $('#su-ln').value.trim(),
-        phone: $('#su-phone').value.trim(),
-        email: $('#su-email').value.trim(),
-        password: $('#su-pass').value,
-        confirm_password: $('#su-pass2').value,
-      };
-      if (!body.first_name || !body.phone || !body.password) { toast('Name, phone and password required', 'error'); return; }
-      if (body.password !== body.confirm_password) { toast('Passwords do not match', 'error'); return; }
-      try {
-        const r = await API.signup(body);
-        if (ok(r) && r.content) {
-          state.token = r.content.token || '';
-          state.user = r.content.user || null;
-          toast('Account created', 'success');
-          renderChrome();
-          location.hash = '#/';
-        } else toast(r.message || 'Signup failed', 'error');
-      } catch (e) { toast(e.message, 'error'); }
-    };
+  function go(hash) { location.hash = hash; }
+
+  /* ---------------- global events ---------------- */
+  function bindGlobalEvents() {
+    window.addEventListener('jb:cart', syncBadges);
+    window.addEventListener('jb:session-expired', () => {
+      toast('Your session has expired. Please sign in again.', 'error');
+      refreshChrome();
+      location.hash = '#/login';
+    });
+
+    const sheet = $('#sheet');
+    sheet.addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeSheet();
+    });
+
+    document.addEventListener('click', (e) => {
+      const logout = e.target.closest('[data-logout]');
+      if (logout) {
+        e.preventDefault();
+        doLogout();
+      }
+    });
   }
 
-  async function vAccount(view) {
-    if (!state.token) { location.hash = '#/login'; return; }
-    let user = state.user;
-    try { const r = await API.profile(); if (ok(r)) user = r.content || user; } catch (e) {}
-    view.innerHTML = `
-      <div class="page page--narrow">
-        <h1 class="pagetitle">Account</h1>
-        <div class="block">
-          <div class="profile">
-            <div class="profile__avatar">${esc(((user && user.first_name) || 'U').charAt(0).toUpperCase())}</div>
-            <div><strong>${esc((user && user.first_name) || '')} ${esc((user && user.last_name) || '')}</strong><p>${esc((user && user.phone) || '')}</p></div>
-          </div>
-        </div>
-        <div class="block">
-          <a class="menurow" href="#/orders"><span>My bookings</span>›</a>
-          <a class="menurow" href="#/cart"><span>Cart</span>›</a>
-        </div>
-        <button class="btn btn--ghost btn--block" id="signout">Log out</button>
-      </div>`;
-    $('#signout').onclick = async () => {
-      try { await API.signout(); } catch (e) {}
-      state.token = ''; state.user = null;
-      renderChrome();
-      location.hash = '#/';
-    };
+  async function doLogout() {
+    const yes = await UI.confirmDialog({
+      title: 'Sign out of Jass Booking?',
+      message: 'You can sign back in any time with your phone number.',
+      confirmLabel: 'Sign out',
+    });
+    if (!yes) return;
+    try { await API.signout(); } catch (e) { /* token may already be gone */ }
+    API.state.clearSession();
+    state.cartCount = 0;
+    refreshChrome();
+    toast('Signed out', 'success');
+    location.hash = '#/';
+    route(true);
   }
 
-  async function vSearch(view, q) {
-    if (!q) { location.hash = '#/'; return; }
-    view.innerHTML = `<div class="page"><div class="skeletons">${'<div class="skel"></div>'.repeat(2)}</div></div>`;
-    let list = [];
-    try { const r = await API.search(q); if (ok(r)) list = (r.content && (r.content.data || r.content.serviceList)) || []; } catch (e) {}
-    view.innerHTML = `
-      <div class="page">
-        <h1 class="pagetitle">Results for “${esc(q)}”</h1>
-        ${list.length ? `<div class="grid">${list.map(serviceCard).join('')}</div>` : `<div class="empty">Kuch nahi mila. Try a different search.</div>`}
-      </div>`;
-  }
-
-  function vNotFound(view) {
-    view.innerHTML = `<div class="page"><div class="empty"><p>Page not found.</p><a class="btn btn--primary" href="#/">Go home</a></div></div>`;
-  }
-
-  return { boot };
+  return {
+    boot, route, go, requireAuth, refreshChrome, renderChrome, syncBadges,
+    openLocationSheet, applyCoords, applyAddress, doLogout,
+    get booted() { return booted; },
+  };
 })();
+
+window.App = App;
 
 App.boot();
