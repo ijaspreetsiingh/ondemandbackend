@@ -6,6 +6,7 @@ use App\Traits\MaintenanceModeTrait;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -456,6 +457,12 @@ class ConfigController extends Controller
 
         $zoneId = zone_id_from_coordinates($lat, $lng);
 
+        // Zone hi nahi mila to global provider uthana galat number deta hai
+        // (doosre shehar ka provider). Aise case me app apna fallback dikhaye.
+        if (empty($zoneId)) {
+            return $empty;
+        }
+
         // Is service ka provider (sirf is zone ke liye assign hua provider)
         $provider = $this->resolveZoneProvider($zoneId, $categoryId, $subCategoryId);
 
@@ -465,14 +472,17 @@ class ConfigController extends Controller
         $nearestServicemanId = null;
         $source = null;
 
-        // 1) Live serviceman locations (pichhle 30 minute me update hui location)
+        // 1) Serviceman locations. Pehle pichhle 30 minute ki fresh location
+        // dekhte hain; na mile to 24 ghante tak purani location bhi chalti hai
+        // (provider ke office se ye zyada sahi hoti hai).
         $freshCutoff = now()->subMinutes(30);
+        $staleCutoff = now()->subHours(24);
         $servicemen = Serviceman::query()
-            ->whereHas('user', function ($query) use ($freshCutoff) {
+            ->whereHas('user', function ($query) use ($staleCutoff) {
                 $query->where('is_active', 1)
                     ->whereNotNull('current_lat')
                     ->whereNotNull('current_lng')
-                    ->where('last_location_updated_at', '>', $freshCutoff);
+                    ->where('last_location_updated_at', '>', $staleCutoff);
             })
             ->whereHas('provider', function ($query) use ($zoneId, $provider) {
                 $query->ofStatus(1)->ofApproval(1)->where('is_suspended', 0);
@@ -491,21 +501,35 @@ class ConfigController extends Controller
                     }
                 });
             })
-            ->with('user:id,current_lat,current_lng')
+            ->with('user:id,current_lat,current_lng,last_location_updated_at')
             ->get(['id', 'user_id', 'provider_id']);
 
-        foreach ($servicemen as $serviceman) {
-            $user = $serviceman->user;
-            if (!$user || !is_numeric($user->current_lat) || !is_numeric($user->current_lng)) {
-                continue;
+        foreach ([true, false] as $freshOnly) {
+            foreach ($servicemen as $serviceman) {
+                $user = $serviceman->user;
+                if (!$user || !is_numeric($user->current_lat) || !is_numeric($user->current_lng)) {
+                    continue;
+                }
+
+                $isFresh = $user->last_location_updated_at
+                    && Carbon::parse($user->last_location_updated_at)->gt($freshCutoff);
+                if ($freshOnly && !$isFresh) {
+                    continue;
+                }
+
+                $distance = calculateDistance($lat, $lng, (float) $user->current_lat, (float) $user->current_lng);
+                if ($nearestDistance === null || $distance < $nearestDistance) {
+                    $nearestDistance = $distance;
+                    $nearestLat = (float) $user->current_lat;
+                    $nearestLng = (float) $user->current_lng;
+                    $nearestServicemanId = $serviceman->id;
+                    $source = 'serviceman';
+                }
             }
-            $distance = calculateDistance($lat, $lng, (float) $user->current_lat, (float) $user->current_lng);
-            if ($nearestDistance === null || $distance < $nearestDistance) {
-                $nearestDistance = $distance;
-                $nearestLat = (float) $user->current_lat;
-                $nearestLng = (float) $user->current_lng;
-                $nearestServicemanId = $serviceman->id;
-                $source = 'serviceman';
+
+            // Koi fresh serviceman mila to stale location dekne ki zaroorat nahi.
+            if ($nearestDistance !== null) {
+                break;
             }
         }
 
@@ -599,9 +623,15 @@ class ConfigController extends Controller
             $minutes = null;
         }
 
+        // Distance-based city estimate: 25 km/h average + road detour factor.
+        // OSRM free-flow speed deta hai (Delhi traffic me 16 km par 15-20 min
+        // jaisa galat low number), isliye is estimate se kam kabhi nahi dikhana.
+        $distanceEstimate = (int) ceil(($distanceKm * 1.4 / 25) * 60);
+
         if ($minutes === null || $minutes <= 0) {
-            // Fallback: 25 km/h average speed + road detour factor
-            $minutes = (int) ceil(($distanceKm * 1.4 / 25) * 60);
+            $minutes = $distanceEstimate;
+        } else {
+            $minutes = max($minutes, $distanceEstimate);
         }
 
         $minutes = max(1, $minutes);
