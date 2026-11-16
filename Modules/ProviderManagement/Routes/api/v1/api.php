@@ -12,6 +12,7 @@ use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\TimeScheduleCont
 use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\ProviderController as ProviderProviderController;
 use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\ServiceController;
 use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\AccountController;
+use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\PendingCollectionController;
 use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\WithdrawController;
 use Modules\ProviderManagement\Http\Controllers\Api\V1\Admin\ProviderController as AdminProviderController;
 
@@ -76,6 +77,15 @@ Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1
     });
 
     Route::get('feedback', [ProviderProviderController::class, 'review']);
+
+    // PENDING COLLECTION (cash after service -> serviceman commission recovery)
+    Route::group(['prefix' => 'pending-collection', 'as' => 'pending_collection.'], function () {
+        Route::get('summary', [PendingCollectionController::class, 'summary'])->name('summary');
+        Route::get('/', [PendingCollectionController::class, 'index'])->name('index');
+        Route::get('technician/{id}', [PendingCollectionController::class, 'servicemanDetail'])->name('serviceman.detail');
+        Route::post('collect', [PendingCollectionController::class, 'collect'])->name('collect');
+        Route::post('technician/status', [PendingCollectionController::class, 'toggleStatus'])->name('serviceman.status');
+    });
 
     Route::get('work-window-plan', [TimeScheduleController::class, 'getAvailableTimeSchedule']);
     Route::put('work-window-plan', [TimeScheduleController::class, 'setAvailableTimeSchedule']);

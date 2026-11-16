@@ -8,6 +8,7 @@ use Modules\ProviderManagement\Http\Controllers\Web\Provider\Report\Business\Ear
 use Modules\ProviderManagement\Http\Controllers\Web\Provider\Report\Business\ExpenseReportController;
 use Modules\ProviderManagement\Http\Controllers\Web\Provider\Report\TransactionReportController;
 use Modules\ProviderManagement\Http\Controllers\Web\Admin\CollectCashController;
+use Modules\ProviderManagement\Http\Controllers\Web\Admin\PendingCollectionController;
 use Modules\ProviderManagement\Http\Controllers\Web\Admin\ProviderController;
 use Modules\ProviderManagement\Http\Controllers\Web\Admin\ProviderRegistrationRequestController;
 use Modules\ProviderManagement\Http\Controllers\Web\Admin\SubscriptionController;
@@ -78,6 +79,13 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'namespace' => 'Web\Admin',
         Route::group(['prefix' => 'collect-cash', 'as' => 'collect_cash.'], function () {
             Route::get('/{id}', [CollectCashController::class, 'index'])->name('list');
             Route::post('/', [CollectCashController::class, 'collectCash'])->name('store');
+        });
+
+        // Admin: provider par pending commission (cash after service) collect karo
+        Route::group(['prefix' => 'pending-collection', 'as' => 'pending_collection.'], function () {
+            Route::get('/', [PendingCollectionController::class, 'index'])->name('index');
+            Route::get('/{id}', [PendingCollectionController::class, 'show'])->name('show');
+            Route::post('/collect', [PendingCollectionController::class, 'collectCash'])->name('collect');
         });
     });
 });

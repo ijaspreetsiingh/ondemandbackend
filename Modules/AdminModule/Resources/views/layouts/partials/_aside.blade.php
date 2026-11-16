@@ -295,9 +295,9 @@ $logo = getBusinessSettingsImageFullPath(key: 'business_logo', settingType: 'bus
             @endcanany
 
             @canany(['provider_view', 'provider_add'])
-                <li class="has-sub-item  {{(request()->is('admin/provider/list') || request()->is('admin/provider/create') || request()->is('admin/provider/details*') || request()->is('admin/provider/edit*') || request()->is('admin/provider/collect-cash*') || request()->is('admin/provider/registration-requests*'))?'sub-menu-opened':''}}">
+                <li class="has-sub-item  {{(request()->is('admin/provider/list') || request()->is('admin/provider/create') || request()->is('admin/provider/details*') || request()->is('admin/provider/edit*') || request()->is('admin/provider/collect-cash*') || request()->is('admin/provider/pending-collection*') || request()->is('admin/provider/registration-requests*'))?'sub-menu-opened':''}}">
                     <a href="#"
-                       class="{{(request()->is('admin/provider/list') || request()->is('admin/provider/create') || request()->is('admin/provider/details*') || request()->is('admin/provider/edit*') || request()->is('admin/provider/collect-cash*') || request()->is('admin/provider/registration-requests*'))?'active-menu':''}}">
+                       class="{{(request()->is('admin/provider/list') || request()->is('admin/provider/create') || request()->is('admin/provider/details*') || request()->is('admin/provider/edit*') || request()->is('admin/provider/collect-cash*') || request()->is('admin/provider/pending-collection*') || request()->is('admin/provider/registration-requests*'))?'active-menu':''}}">
                         <span class="material-icons" title="Providers">engineering</span>
                         <span class="link-title">{{translate('providers')}}</span>
                     </a>
@@ -306,6 +306,12 @@ $logo = getBusinessSettingsImageFullPath(key: 'business_logo', settingType: 'bus
                             <li>
                                 <a href="{{route('admin.provider.list', ['status'=>'all'])}}"
                                    class="{{(request()->is('admin/provider/list'))?'active-menu':''}}">{{translate('Provider_List')}}</a>
+                            </li>
+                            <li>
+                                <a href="{{route('admin.provider.pending_collection.index')}}"
+                                   class="{{request()->is('admin/provider/pending-collection*')?'active-menu':''}}">
+                                    <span class="link-title">{{translate('Provider_Pending_Amount_Collect')}}</span>
+                                </a>
                             </li>
                             <li>
                                 <a href="{{route('admin.provider.registration_requests.index')}}"
