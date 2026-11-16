@@ -17,7 +17,10 @@ use Modules\BusinessSettingsModule\Entities\DataSetting;
 use Modules\BusinessSettingsModule\Entities\ErrorLog;
 use Modules\BusinessSettingsModule\Entities\LoginSetup;
 use Modules\PaymentModule\Entities\Setting;
+use Modules\ProviderManagement\Entities\Provider;
+use Modules\ProviderManagement\Entities\SubscribedService;
 use Modules\ServiceManagement\Entities\Service;
+use Modules\UserManagement\Entities\Serviceman;
 use Modules\UserManagement\Entities\User;
 use Modules\ZoneManagement\Entities\Zone;
 
@@ -262,6 +265,26 @@ class ConfigController extends Controller
                 if (!empty($cartProviderId)) {
                     $provider = \Modules\ProviderManagement\Entities\Provider::find($cartProviderId);
                 }
+
+                // Zone/category assigned provider: is system me service ka apna
+                // provider_id hota hi nahi (provider zone + sub-category se
+                // assign hota hai). Isliye cart ke service ke hisab se us zone
+                // ka assigned provider resolve karo — warna app global fee/label
+                // (e.g. "tex") dikhati rehti hai aur provider ki settings ignore
+                // ho jati hain.
+                if (!$provider) {
+                    $cartItem = \Modules\CartModule\Entities\Cart::where('customer_id', $cartCustomerId)
+                        ->whereNotNull('service_id')
+                        ->first(['id', 'category_id', 'sub_category_id']);
+
+                    if ($cartItem) {
+                        $provider = $this->resolveZoneProvider(
+                            config('zone_id'),
+                            $cartItem->category_id,
+                            $cartItem->sub_category_id,
+                        );
+                    }
+                }
             }
         }
 
@@ -380,6 +403,210 @@ class ConfigController extends Controller
         }
 
         return response()->json(response_formatter(ZONE_RESOURCE_404), 200);
+    }
+
+    /**
+     * Nearest partner/serviceman ka customer location se reach time (minutes).
+     * App ke "45 mins" hardcoded label ki jagah distance ke hisab se time
+     * milta hai; 30 minute se zyada estimate par 29 minute return hota hai.
+     */
+    public function reachTime(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'lat' => 'required|numeric',
+            'lng' => 'required|numeric',
+            'category_id' => 'nullable|string|max:36',
+            'sub_category_id' => 'nullable|string|max:36',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(response_formatter(DEFAULT_400, null, error_processor($validator)), 400);
+        }
+
+        $content = $this->nearestReachEstimate(
+            (float) $request['lat'],
+            (float) $request['lng'],
+            $request['category_id'] ? (string) $request['category_id'] : null,
+            $request['sub_category_id'] ? (string) $request['sub_category_id'] : null,
+        );
+
+        return response()->json(response_formatter(DEFAULT_200, $content), 200);
+    }
+
+    /**
+     * Flow: customer location → zone → us zone ka assigned provider (main
+     * category / sub-category ke hisab se) → us provider ke servicemen jinhe
+     * ye sub-category assign hai → inme se nearest live serviceman ka distance
+     * se travel time. Category na ho to zone-level nearest fallback.
+     */
+    private function nearestReachEstimate(float $lat, float $lng, ?string $categoryId = null, ?string $subCategoryId = null): array
+    {
+        $empty = ['minutes' => null, 'distance_km' => null, 'source' => null, 'provider_id' => null, 'serviceman_id' => null];
+
+        if (($lat == 0.0 && $lng == 0.0) || $lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) {
+            return $empty;
+        }
+
+        $cacheKey = 'reach_time:' . round($lat, 5) . ':' . round($lng, 5)
+            . ':' . ($categoryId ?? '-') . ':' . ($subCategoryId ?? '-');
+        $cached = Cache::get($cacheKey);
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $zoneId = zone_id_from_coordinates($lat, $lng);
+
+        // Is service ka provider (sirf is zone ke liye assign hua provider)
+        $provider = $this->resolveZoneProvider($zoneId, $categoryId, $subCategoryId);
+
+        $nearestLat = null;
+        $nearestLng = null;
+        $nearestDistance = null;
+        $nearestServicemanId = null;
+        $source = null;
+
+        // 1) Live serviceman locations (pichhle 30 minute me update hui location)
+        $freshCutoff = now()->subMinutes(30);
+        $servicemen = Serviceman::query()
+            ->whereHas('user', function ($query) use ($freshCutoff) {
+                $query->where('is_active', 1)
+                    ->whereNotNull('current_lat')
+                    ->whereNotNull('current_lng')
+                    ->where('last_location_updated_at', '>', $freshCutoff);
+            })
+            ->whereHas('provider', function ($query) use ($zoneId, $provider) {
+                $query->ofStatus(1)->ofApproval(1)->where('is_suspended', 0);
+                if ($provider) {
+                    $query->where('id', $provider->id);
+                } elseif (!empty($zoneId)) {
+                    $query->where('zone_id', $zoneId);
+                }
+            })
+            ->when($subCategoryId, function ($query) use ($subCategoryId, $categoryId) {
+                // Provider ne serviceman ko yehi sub-category assign ki ho
+                $query->whereHas('servicemanCategories', function ($assignment) use ($subCategoryId, $categoryId) {
+                    $assignment->where('sub_category_id', $subCategoryId);
+                    if (!empty($categoryId)) {
+                        $assignment->where('category_id', $categoryId);
+                    }
+                });
+            })
+            ->with('user:id,current_lat,current_lng')
+            ->get(['id', 'user_id', 'provider_id']);
+
+        foreach ($servicemen as $serviceman) {
+            $user = $serviceman->user;
+            if (!$user || !is_numeric($user->current_lat) || !is_numeric($user->current_lng)) {
+                continue;
+            }
+            $distance = calculateDistance($lat, $lng, (float) $user->current_lat, (float) $user->current_lng);
+            if ($nearestDistance === null || $distance < $nearestDistance) {
+                $nearestDistance = $distance;
+                $nearestLat = (float) $user->current_lat;
+                $nearestLng = (float) $user->current_lng;
+                $nearestServicemanId = $serviceman->id;
+                $source = 'serviceman';
+            }
+        }
+
+        // 2) Fallback: provider ki registered location (wahi assigned provider)
+        if ($nearestDistance === null) {
+            $providers = $provider
+                ? collect([$provider])
+                : Provider::query()
+                    ->ofStatus(1)->ofApproval(1)->where('is_suspended', 0)
+                    ->when(!empty($zoneId), fn ($query) => $query->where('zone_id', $zoneId))
+                    ->get(['id', 'coordinates']);
+
+            foreach ($providers as $candidate) {
+                [$providerLat, $providerLng] = getProviderCoordinates($candidate);
+                if ($providerLat === null || $providerLng === null) {
+                    continue;
+                }
+                $distance = calculateDistance($lat, $lng, $providerLat, $providerLng);
+                if ($nearestDistance === null || $distance < $nearestDistance) {
+                    $nearestDistance = $distance;
+                    $nearestLat = $providerLat;
+                    $nearestLng = $providerLng;
+                    $source = 'provider';
+                }
+            }
+        }
+
+        $content = $empty;
+        if ($nearestDistance !== null && $nearestLat !== null && $nearestLng !== null) {
+            $content = [
+                'minutes' => $this->travelMinutes($lat, $lng, $nearestLat, $nearestLng, (float) $nearestDistance),
+                'distance_km' => round((float) $nearestDistance, 1),
+                'source' => $source,
+                'provider_id' => $provider?->id,
+                'serviceman_id' => $nearestServicemanId,
+            ];
+        }
+
+        Cache::put($cacheKey, $content, now()->addMinutes(2));
+
+        return $content;
+    }
+
+    /**
+     * Zone me is main category / sub-category ka assigned provider.
+     * Rule: sub_category assignment pehle, phir category ka 'complete' assignment.
+     */
+    private function resolveZoneProvider(?string $zoneId, ?string $categoryId, ?string $subCategoryId): ?Provider
+    {
+        if (empty($zoneId) || (empty($categoryId) && empty($subCategoryId))) {
+            return null;
+        }
+
+        $query = SubscribedService::query()
+            ->where('is_subscribed', 1)
+            ->where(function ($assignment) use ($categoryId, $subCategoryId) {
+                if (!empty($subCategoryId)) {
+                    $assignment->where('sub_category_id', $subCategoryId);
+                }
+                if (!empty($categoryId)) {
+                    $assignment->orWhere(function ($categoryQuery) use ($categoryId) {
+                        $categoryQuery->where('category_id', $categoryId)->where('assign_type', 'complete');
+                    });
+                }
+            })
+            ->whereHas('provider', function ($provider) use ($zoneId) {
+                $provider->ofStatus(1)->ofApproval(1)->where('is_suspended', 0)
+                    ->where('zone_id', $zoneId);
+            });
+
+        return $query->with('provider:id,zone_id,coordinates')->first()?->provider;
+    }
+
+    /**
+     * Driving time (minutes) nearest partner tak. OSRM route se, fail par
+     * distance-based estimate. 30 minute se upar kabhi nahi dikhata.
+     */
+    private function travelMinutes(float $lat, float $lng, float $destLat, float $destLng, float $distanceKm): int
+    {
+        $minutes = null;
+
+        try {
+            $url = 'https://router.project-osrm.org/route/v1/driving/'
+                . $lng . ',' . $lat . ';' . $destLng . ',' . $destLat . '?overview=false';
+            $response = Http::timeout(4)->withHeaders(['User-Agent' => 'YOVOApp/1.0'])->get($url);
+            $duration = $response->json('routes.0.duration');
+            if (is_numeric($duration) && $duration > 0) {
+                $minutes = (int) round($duration / 60);
+            }
+        } catch (\Throwable $exception) {
+            $minutes = null;
+        }
+
+        if ($minutes === null || $minutes <= 0) {
+            // Fallback: 25 km/h average speed + road detour factor
+            $minutes = (int) ceil(($distanceKm * 1.4 / 25) * 60);
+        }
+
+        $minutes = max(1, $minutes);
+
+        return $minutes > 30 ? 29 : $minutes;
     }
 
     public function placeApiAutocomplete(Request $request): JsonResponse

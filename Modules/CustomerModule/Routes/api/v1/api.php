@@ -41,6 +41,7 @@ Route::group(['prefix' => 'client', 'as' => 'customer.', 'namespace' => 'Api\V1\
         Route::middleware('throttle:geo')->group(function () {
             Route::get('geo-suggest', [ConfigController::class, 'placeApiAutocomplete']);
             Route::get('distance-api', [ConfigController::class, 'distanceApi']);
+            Route::get('reach-time', [ConfigController::class, 'reachTime']);
             Route::get('geo-spot-facts', [ConfigController::class, 'placeApiDetails']);
             Route::get('geo-coder', [ConfigController::class, 'geocodeApi']);
         });
