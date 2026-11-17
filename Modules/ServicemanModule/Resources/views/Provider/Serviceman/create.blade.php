@@ -87,6 +87,8 @@
                                     <option value="driving_license">{{translate('Driving_License')}}</option>
                                     <option value="nid">{{translate('nid')}}</option>
                                     <option value="trade_license">{{translate('Trade_License')}}</option>
+                                    <option value="aadhaar_card" {{old('identity_type') == 'aadhaar_card' ? 'selected' : ''}}>Aadhaar Card</option>
+                                    <option value="pan_card" {{old('identity_type') == 'pan_card' ? 'selected' : ''}}>PAN Card</option>
                                 </select>
 
                                 <div class="form-floating form-floating__icon mb-30">

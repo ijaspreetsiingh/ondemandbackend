@@ -156,6 +156,8 @@
                                             <option value="trade_license"
                                                 {{$provider->owner->identification_type == 'trade_license' ? 'selected': ''}}>
                                                 {{translate('Trade_License')}}</option>
+                                            <option value="aadhaar_card" {{$provider->owner->identification_type == 'aadhaar_card' ? 'selected' : ''}}>Aadhaar Card</option>
+                                            <option value="pan_card" {{$provider->owner->identification_type == 'pan_card' ? 'selected' : ''}}>PAN Card</option>
                                         </select>
                                     </div>
                                     <div class="form-floating form-floating__icon mb-30">
@@ -692,7 +694,7 @@
                                      Ye setting sirf isi provider (aur iske servicemen) par lagti hai. --}}
                                 <div class="col-md-12">
                                     <label class="mb-2 text-dark">{{translate('Extra Charge Distribution')}}</label>
-                                    <p class="fz-12 mb-10">{{translate('Customer ke final payment me jo extra charges lagte hain (visiting/global charge, tax, payment fee), unka paisa kisko milega — ye har charge ke liye alag-alag select karein. Ye setting sirf is provider aur iske servicemen par lagti hai.')}}</p>
+                                    <p class="fz-12 mb-10">{{translate('This dropdown only selects who receives each charge. Set the global visiting charge amount and label under Booking Settings. Turn Separate provider fees ON to use the Customer Booking Fee above for this provider; OFF uses the global amount.')}}</p>
                                     @php
                                         $providerChargeOwners = providerChargeOwners($provider);
                                         $providerChargeOwnerOptions = chargeOwnerOptions();

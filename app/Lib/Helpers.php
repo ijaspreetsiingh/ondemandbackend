@@ -1461,20 +1461,16 @@ if (!function_exists('providerBookingFee')) {
     /**
      * Customer-facing booking fee for this provider.
      *  - Separate fees ON  -> provider ki fee strictly lagti hai (0 = koi fee nahi).
-     *  - Separate fees OFF -> legacy: fee > 0 ho to provider fee, warna null
+     *  - Separate fees OFF -> global fee applies when separate fees are off
      *    (null = global booking_additional_charge flow, nothing changes).
      *  - Independent hi nahi -> null (global flow).
      */
     function providerBookingFee($provider): ?float
     {
-        if (!providerIsIndependent($provider)) {
+        if (!providerCustomFeesEnabled($provider)) {
             return null;
         }
-        if (providerCustomFeesEnabled($provider)) {
-            return max(0, (float) ($provider->booking_fee ?? 0));
-        }
-        $fee = (float) ($provider->booking_fee ?? 0);
-        return $fee > 0 ? $fee : null;
+        return max(0, (float) ($provider->booking_fee ?? 0));
     }
 }
 
@@ -1485,34 +1481,22 @@ if (!function_exists('providerBookingFeeLabel')) {
      */
     function providerBookingFeeLabel($provider): ?string
     {
-        if (!providerIsIndependent($provider)) {
+        if (!providerCustomFeesEnabled($provider)) {
             return null;
         }
-
-        $fee = (float) ($provider->booking_fee ?? 0);
+        $fee = providerBookingFee($provider) ?? 0;
+        if ($fee <= 0) {
+            return null;
+        }
         $label = trim((string) ($provider->booking_fee_label ?? ''));
-
-        // Label sirf tab chhodna chahiye jab provider ki fee hi na lage.
-        // Agar provider ki booking_fee lag rahi hai (separate fees ON, ya legacy
-        // fee > 0 fallback) to uska apna label hi dikhna chahiye — warna customer
-        // ko global "Booking Fee" dikhta hai jabke charge provider ka hai.
-        if (!providerCustomFeesEnabled($provider) && $fee <= 0) {
-            return null;
-        }
-
-        if ($label !== '') {
-            return $label;
-        }
-
-        // Fee set hai par label empty hai -> default label, taaki charge app me show ho.
-        return $fee > 0 ? 'Booking Fee' : null;
+        return $label !== '' ? $label : 'Booking Fee';
     }
 }
 
 if (!function_exists('bookingExtraFee')) {
     /**
      * Customer-facing booking extra fee (flat charge added to booking total).
-     * Independent provider with booking_fee > 0 -> that fee, else global config
+     * Provider fee applies only when separate fees are on
      * (identical to the legacy behaviour).
      */
     function bookingExtraFee($provider): float

@@ -108,6 +108,39 @@ class PendingCollectionService
     }
 
     /**
+     * Split the amount due back from a Service Man by its configured owner.
+     * Platform fee is already included in the stored commission shares.
+     */
+    public static function bookingDueBreakdown($provider, object $row): array
+    {
+        $owners = providerChargeOwners($provider);
+        $adminDue = (float) ($row->admin_commission ?? 0);
+        $providerDue = (float) ($row->provider_commission ?? 0);
+        $extraFee = (float) ($row->extra_fee ?? 0);
+        $tax = (float) ($row->total_tax_amount ?? 0);
+
+        if (($owners['extra_fee'] ?? 'admin') === 'admin') {
+            $adminDue += $extraFee;
+        } elseif (($owners['extra_fee'] ?? 'admin') === 'provider') {
+            $providerDue += $extraFee;
+        }
+
+        if (($owners['tax'] ?? 'provider') === 'admin') {
+            $adminDue += $tax;
+        } elseif (($owners['tax'] ?? 'provider') === 'provider') {
+            $providerDue += $tax;
+        }
+
+        $share = self::bookingDueShare($provider, $row);
+        return [
+            'due' => $share['due'],
+            'admin_due' => round(max($adminDue, 0), 2),
+            'provider_due' => round(max($providerDue, 0), 2),
+            'serviceman_earning' => $share['serviceman_earning'],
+        ];
+    }
+
+    /**
      * Provider ke saare completed cash bookings ki kul "due" (jo serviceman
      * wapas dega) serviceman-wise grouped. Charge-owner setting ke hisab se.
      *

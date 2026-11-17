@@ -756,7 +756,7 @@ class ProviderController extends Controller
             'company_email' => 'required|email',
             'logo' => 'required|image|required|max:'. uploadMaxFileSizeInKB('image') .'|mimes:' . implode(',', array_column(IMAGEEXTENSION, 'key')),
 
-            'identity_type' => 'required|in:passport,driving_license,nid,trade_license,company_id',
+            'identity_type' => 'required|in:passport,driving_license,nid,trade_license,company_id,aadhaar_card,pan_card',
             'identity_number' => 'required',
             'identity_images' => 'array',
             'identity_images.*' => 'image|max:'. uploadMaxFileSizeInKB('image') .'|mimes:' . implode(',', array_column(IMAGEEXTENSION, 'key')),
@@ -1250,7 +1250,7 @@ class ProviderController extends Controller
             'company_email' => 'required|email',
             'logo' => 'image|max:'. uploadMaxFileSizeInKB('image') .'|mimes:' . implode(',', array_column(IMAGEEXTENSION, 'key')),
 
-            'identity_type' => 'required|in:passport,driving_license,nid,trade_license,company_id',
+            'identity_type' => 'required|in:passport,driving_license,nid,trade_license,company_id,aadhaar_card,pan_card',
             'identity_number' => 'required',
             'identity_images' => 'array',
             'identity_images.*' => 'image|max:'. uploadMaxFileSizeInKB('image') .'|mimes:' . implode(',', array_column(IMAGEEXTENSION, 'key')),

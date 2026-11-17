@@ -58,7 +58,7 @@
                     <div class="card h-100">
                         <div class="card-body">
                             <h3 class="mb-1 text-danger">{{with_currency_symbol($pendingAmount)}}</h3>
-                            <p class="text-muted mb-0">{{translate('Pending_Amount')}}</p>
+                            <p class="text-muted mb-0">{{translate('Provider owes Admin')}}</p>
                         </div>
                     </div>
                 </div>
@@ -66,7 +66,7 @@
                     <div class="card h-100">
                         <div class="card-body">
                             <h3 class="mb-1">{{with_currency_symbol($totalServicemanPending)}}</h3>
-                            <p class="text-muted mb-0">{{translate('Service_Men_Pending')}}</p>
+                            <p class="text-muted mb-0">{{translate('Service Men owe Provider')}}</p>
                         </div>
                     </div>
                 </div>
@@ -94,6 +94,12 @@
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <div class="alert alert-info mb-4">
+                <strong>{{translate('Provider owes Admin')}}:</strong> Provider's current outstanding balance to Admin.
+                <strong>{{translate('Service Men owe Provider')}}:</strong> Cash Provider still needs to collect from Service Men.
+                These are separate balances. Collection history shows the actual receipt date and amount. The booking table shows completed cash-after-service bookings assigned to a Service Man. Receipts are displayed against the oldest outstanding bookings. For this report, the Admin share is reduced first, then the Provider share. Receipt records store only a total amount, not a booking ID or share split. Both balance cards show all-time balances. Date filters affect the booking and receipt history rows only.
             </div>
 
             <div class="card mb-4">
@@ -203,7 +209,7 @@
 
             <div class="row g-4 mb-4">
                 <div class="col-xl-6"><div class="card h-100"><div class="card-body">
-                    <h5 class="mb-3">{{translate('Provider_Payments_Received')}}</h5>
+                    <h5 class="mb-3">{{translate('Admin received from Provider')}}</h5>
                     <div class="table-responsive"><table class="table align-middle">
                         <thead><tr><th>{{translate('Date')}}</th><th>{{translate('Amount')}}</th><th>{{translate('Transaction_ID')}}</th></tr></thead>
                         <tbody>
@@ -217,7 +223,7 @@
                     </table></div>
                 </div></div></div>
                 <div class="col-xl-6"><div class="card h-100"><div class="card-body">
-                    <h5 class="mb-3">{{translate('Service_Man_Collections')}}</h5>
+                    <h5 class="mb-3">{{translate('Provider received from Service Man')}}</h5>
                     <div class="table-responsive"><table class="table align-middle">
                         <thead><tr><th>{{translate('Service_Man')}}</th><th>{{translate('Date')}}</th><th>{{translate('Amount')}}</th><th>{{translate('Note')}}</th></tr></thead>
                         <tbody>
@@ -240,9 +246,10 @@
                     <div class="table-responsive"><table class="table align-middle">
                         <thead><tr><th>{{translate('Booking')}}</th><th>{{translate('Date')}}</th>
                             <th>{{translate('Service_Name')}}</th><th>{{translate('Service_Man')}}</th>
-                            <th>{{translate('Customer_Paid')}}</th><th>{{translate('Admin_Commission')}}</th>
-                            <th>{{translate('Provider_Commission')}}</th><th>{{translate('Service_Man_Earning')}}</th>
-                            <th>{{translate('Service_Man_Paid_to_Provider')}}</th><th>{{translate('Extra_Fee')}}</th><th>{{translate('Tax')}}</th></tr></thead>
+                            <th>{{translate('Customer_Paid')}}</th><th>{{translate('Admin share (due / SM-paid)')}}</th>
+                            <th>{{translate('Provider share (due / SM-paid)')}}</th><th>{{translate('Service_Man_Earning')}}</th>
+                            <th>{{translate('Service Man owes Provider')}}</th><th>{{translate('Service Man paid (FIFO)')}}</th>
+                            <th>{{translate('Still due from Service Man')}}</th><th>{{translate('Extra_Fee')}}</th><th>{{translate('Tax')}}</th><th>{{translate('Platform fee (included in share above)')}}</th></tr></thead>
                         <tbody>
                         @forelse($bookingLedgers as $booking)
                             <tr><td><a href="{{route('admin.booking.details', [$booking->id, 'web_page' => 'details'])}}">#{{$booking->readable_id}}</a></td>
@@ -250,9 +257,16 @@
                                 <td>{{$booking->sub_category_name ?: ($booking->category_name ?: '-')}}</td>
                                 <td>{{trim(($booking->serviceman_first_name ?? '') . ' ' . ($booking->serviceman_last_name ?? '')) ?: '-'}}</td>
                                 <td>{{with_currency_symbol($booking->total_booking_amount)}}</td>
-                                <td>{{with_currency_symbol($booking->admin_share)}}</td>
-                                <td>{{with_currency_symbol($booking->provider_share)}}</td>
+                                <td>
+                                    {{with_currency_symbol($booking->admin_due)}}
+                                    <small class="d-block text-muted">SM-paid allocation: {{with_currency_symbol($booking->admin_collected)}}</small>
+                                </td>
+                                <td>
+                                    {{with_currency_symbol($booking->provider_due)}}
+                                    <small class="d-block text-muted">SM-paid allocation: {{with_currency_symbol($booking->provider_collected)}}</small>
+                                </td>
                                 <td>{{with_currency_symbol($booking->serviceman_earning)}}</td>
+                                <td>{{with_currency_symbol($booking->serviceman_due)}}</td>
                                 <td>{{with_currency_symbol($booking->serviceman_collected)}}
                                     @if(count($booking->serviceman_payment_history))
                                         <details><summary>{{translate('Payment_History')}}</summary>
@@ -266,10 +280,12 @@
                                         </details>
                                     @endif
                                 </td>
+                                <td class="fw-semibold {{$booking->serviceman_pending > 0 ? 'text-danger' : 'text-success'}}">{{with_currency_symbol($booking->serviceman_pending)}}</td>
                                 <td>{{with_currency_symbol($booking->extra_fee)}}</td>
-                                <td>{{with_currency_symbol($booking->total_tax_amount)}}</td></tr>
+                                <td>{{with_currency_symbol($booking->total_tax_amount)}}</td>
+                                <td>{{with_currency_symbol($booking->platform_fee)}}</td></tr>
                         @empty
-                            <tr><td colspan="11" class="text-center py-5 text-muted">{{translate('No_booking_found')}}</td></tr>
+                            <tr><td colspan="14" class="text-center py-5 text-muted">{{translate('No_booking_found')}}</td></tr>
                         @endforelse
                         </tbody>
                     </table></div>

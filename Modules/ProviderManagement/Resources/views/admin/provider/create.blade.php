@@ -136,6 +136,8 @@
                                                 <option value="trade_license"
                                                     {{old('identity_type') == 'nid' ? 'selected': ''}}>
                                                     {{translate('Trade_License')}}</option>
+                                                <option value="aadhaar_card" {{old('identity_type') == 'aadhaar_card' ? 'selected' : ''}}>Aadhaar Card</option>
+                                                <option value="pan_card" {{old('identity_type') == 'pan_card' ? 'selected' : ''}}>PAN Card</option>
                                             </select>
                                         </div>
                                     </div>

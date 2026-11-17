@@ -90,8 +90,9 @@ class PendingCollectionController extends Controller
 
         [$from, $to] = $this->dateRange($request);
 
+        // Current balances are all-time; the date filter below is for histories only.
         $servicemen = PendingCollectionService::servicemanPendingList(
-            $provider->id, $from, $to, '', 200, 1, 'all'
+            $provider->id, null, null, '', 200, 1, 'all'
         )['data'];
 
         $pendingAmount = (float) ($provider->owner?->account?->account_payable ?? 0);
@@ -205,17 +206,27 @@ class PendingCollectionController extends Controller
         foreach ($bookingLedgers->groupBy('serviceman_id') as $servicemanId => $ledgerGroup) {
             $oldestFirst = $ledgerGroup->sortBy('created_at')->values();
             $remainingByBooking = [];
+            $adminRemainingByBooking = [];
+            $providerRemainingByBooking = [];
             foreach ($oldestFirst as $ledger) {
-                $remainingByBooking[] = PendingCollectionService::bookingDueShare($provider, (object) [
+                $bookingSplit = PendingCollectionService::bookingDueBreakdown($provider, (object) [
                     'extra_fee' => $ledger->extra_fee,
                     'total_tax_amount' => $ledger->total_tax_amount,
                     'platform_fee' => $ledger->platform_fee ?? 0,
                     'admin_commission' => $ledger->admin_share,
                     'provider_commission' => $ledger->provider_share,
                     'serviceman_earning' => $ledger->serviceman_earning,
-                ])['due'];
+                ]);
+                $ledger->admin_due = $bookingSplit['admin_due'];
+                $ledger->provider_due = $bookingSplit['provider_due'];
+                $ledger->serviceman_due = $bookingSplit['due'];
+                $remainingByBooking[] = $bookingSplit['due'];
+                $adminRemainingByBooking[] = $bookingSplit['admin_due'];
+                $providerRemainingByBooking[] = $bookingSplit['provider_due'];
                 $ledger->serviceman_payment_history = [];
                 $ledger->serviceman_collected = 0.0;
+                $ledger->admin_collected = 0.0;
+                $ledger->provider_collected = 0.0;
             }
 
             $bookingIndex = 0;
@@ -229,6 +240,12 @@ class PendingCollectionController extends Controller
                     $amount = round(min($left, $remainingByBooking[$bookingIndex]), 2);
                     $ledger = $oldestFirst[$bookingIndex];
                     $ledger->serviceman_collected = round($ledger->serviceman_collected + $amount, 2);
+                    $adminAmount = round(min($amount, $adminRemainingByBooking[$bookingIndex]), 2);
+                    $providerAmount = round($amount - $adminAmount, 2);
+                    $ledger->admin_collected = round($ledger->admin_collected + $adminAmount, 2);
+                    $ledger->provider_collected = round($ledger->provider_collected + $providerAmount, 2);
+                    $adminRemainingByBooking[$bookingIndex] = round($adminRemainingByBooking[$bookingIndex] - $adminAmount, 2);
+                    $providerRemainingByBooking[$bookingIndex] = round($providerRemainingByBooking[$bookingIndex] - $providerAmount, 2);
                     $ledger->serviceman_payment_history[] = [
                         'amount' => $amount,
                         'note' => $receipt->note,
@@ -240,6 +257,12 @@ class PendingCollectionController extends Controller
                         $bookingIndex++;
                     }
                 }
+            }
+
+            foreach ($oldestFirst as $index => $ledger) {
+                $ledger->serviceman_pending = round(max($remainingByBooking[$index] ?? 0, 0), 2);
+                $ledger->admin_pending = round(max($adminRemainingByBooking[$index] ?? 0, 0), 2);
+                $ledger->provider_pending = round(max($providerRemainingByBooking[$index] ?? 0, 0), 2);
             }
         }
 
