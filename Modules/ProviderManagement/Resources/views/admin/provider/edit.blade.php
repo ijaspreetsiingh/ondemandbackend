@@ -686,6 +686,37 @@
                                         </div>
                                     </div>
                                 </div>
+
+                                {{-- Extra Charge Distribution: har extra charge (visiting/tax/platform fee) ka
+                                     paisa kisko milega — Admin / Provider / Serviceman / Final Payment.
+                                     Ye setting sirf isi provider (aur iske servicemen) par lagti hai. --}}
+                                <div class="col-md-12">
+                                    <label class="mb-2 text-dark">{{translate('Extra Charge Distribution')}}</label>
+                                    <p class="fz-12 mb-10">{{translate('Customer ke final payment me jo extra charges lagte hain (visiting/global charge, tax, payment fee), unka paisa kisko milega — ye har charge ke liye alag-alag select karein. Ye setting sirf is provider aur iske servicemen par lagti hai.')}}</p>
+                                    @php
+                                        $providerChargeOwners = providerChargeOwners($provider);
+                                        $providerChargeOwnerOptions = chargeOwnerOptions();
+                                    @endphp
+                                    <div class="border rounded p-12 bg-white">
+                                        <div class="row g-2">
+                                            @foreach (providerChargeTypes() as $chargeKey => $chargeMeta)
+                                                <div class="col-md-4">
+                                                    <label class="mb-1 text-dark fz-14">{{ translate($chargeMeta['label']) }}</label>
+                                                    <div class="form-floating form-floating__icon">
+                                                        <select class="form-control" name="extra_charge_owners[{{ $chargeKey }}]" id="extra_charge_owners_{{ $chargeKey }}">
+                                                            @foreach ($providerChargeOwnerOptions as $ownerValue => $ownerLabel)
+                                                                <option value="{{ $ownerValue }}"
+                                                                    @selected(old('extra_charge_owners.'.$chargeKey, $providerChargeOwners[$chargeKey] ?? $chargeMeta['default']) === $ownerValue)>{{ translate($ownerLabel) }}</option>
+                                                            @endforeach
+                                                        </select>
+                                                        <label>{{translate('Money goes to')}}</label>
+                                                        <span class="material-icons">account_tree</span>
+                                                    </div>
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

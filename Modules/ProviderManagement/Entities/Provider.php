@@ -42,6 +42,7 @@ class Provider extends Model
         'tax_percent' => 'float',
         'booking_fee' => 'float',
         'custom_fees_enabled' => 'integer',
+        'extra_charge_owners' => 'array',
         'is_active' => 'integer',
         'is_approved' => 'integer',
         'auto_assign_mode' => 'integer',
@@ -52,7 +53,7 @@ class Provider extends Model
         'category_assignment_mode' => 'integer'
     ];
 
-    protected $fillable = ['auto_assign_mode', 'auto_assign_wait_time', 'auto_assign_any_category', 'auto_reassign_on_cancel', 'category_assignment_mode', 'assigned_main_category_id', 'allow_service_create', 'allow_service_edit', 'unsatisfied_window_days', 'service_approval_required', 'independent_mode', 'admin_commission_percent', 'provider_commission_percent', 'platform_fee_amount', 'platform_fee_label', 'tax_percent', 'booking_fee', 'custom_fees_enabled', 'booking_fee_label', 'calling_enabled', 'allowed_payment_methods'];
+    protected $fillable = ['auto_assign_mode', 'auto_assign_wait_time', 'auto_assign_any_category', 'auto_reassign_on_cancel', 'category_assignment_mode', 'assigned_main_category_id', 'allow_service_create', 'allow_service_edit', 'unsatisfied_window_days', 'service_approval_required', 'independent_mode', 'admin_commission_percent', 'provider_commission_percent', 'platform_fee_amount', 'platform_fee_label', 'tax_percent', 'booking_fee', 'custom_fees_enabled', 'booking_fee_label', 'extra_charge_owners', 'calling_enabled', 'allowed_payment_methods'];
 
     protected $hidden = [];
 

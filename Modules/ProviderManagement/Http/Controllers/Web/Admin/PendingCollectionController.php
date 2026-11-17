@@ -156,6 +156,100 @@ class PendingCollectionController extends Controller
 
         $totalServicemanPending = array_sum(array_column($servicemen, 'pending_amount'));
 
+        $providerPayments = DB::table('transactions')
+            ->where('from_user_id', $provider->owner?->id)
+            ->where('trx_type', 'paid_commission')
+            ->when($from, fn($q) => $q->whereDate('created_at', '>=', $from))
+            ->when($to, fn($q) => $q->whereDate('created_at', '<=', $to))
+            ->orderByDesc('created_at')->limit(100)
+            ->get(['id', 'debit as amount', 'created_at']);
+
+        $servicemanCollections = DB::table('serviceman_cash_collections as c')
+            ->join('servicemen as s', 's.id', '=', 'c.serviceman_id')
+            ->join('users as u', 'u.id', '=', 's.user_id')
+            ->where('c.provider_id', $provider->id)
+            ->when($from, fn($q) => $q->whereDate('c.created_at', '>=', $from))
+            ->when($to, fn($q) => $q->whereDate('c.created_at', '<=', $to))
+            ->orderByDesc('c.created_at')->limit(100)
+            ->select('c.id', 'c.amount', 'c.note', 'c.created_at', 'u.first_name', 'u.last_name')
+            ->get();
+
+        $bookingLedgers = DB::table('bookings as b')
+            ->join('booking_details_amounts as a', 'a.booking_id', '=', 'b.id')
+            ->leftJoin('categories as sc', 'sc.id', '=', 'b.sub_category_id')
+            ->leftJoin('categories as mc', 'mc.id', '=', 'b.category_id')
+            ->leftJoin('servicemen as s', 's.id', '=', 'b.serviceman_id')
+            ->leftJoin('users as u', 'u.id', '=', 's.user_id')
+            ->where('b.provider_id', $provider->id)
+            ->where('b.booking_status', 'completed')
+            ->where('b.payment_method', 'cash_after_service')
+            ->whereNotNull('b.serviceman_id')->whereNull('a.booking_repeat_id')
+            ->groupBy('b.id', 'b.serviceman_id', 'b.readable_id', 'b.created_at', 'b.total_booking_amount',
+                'b.extra_fee', 'b.total_tax_amount', 'b.platform_fee', 'sc.name', 'mc.name', 'u.first_name', 'u.last_name')
+            ->orderByDesc('b.created_at')
+            ->select('b.id', 'b.serviceman_id', 'b.readable_id', 'b.created_at', 'b.total_booking_amount',
+                'b.extra_fee', 'b.total_tax_amount', 'b.platform_fee', 'sc.name as sub_category_name',
+                'mc.name as category_name', 'u.first_name as serviceman_first_name',
+                'u.last_name as serviceman_last_name',
+                DB::raw('SUM(a.admin_commission) as admin_share'),
+                DB::raw('SUM(a.provider_commission) as provider_share'),
+                DB::raw('SUM(a.serviceman_earning) as serviceman_earning'))
+            ->get();
+
+        $allCollections = DB::table('serviceman_cash_collections')
+            ->where('provider_id', $provider->id)
+            ->orderBy('created_at')->orderBy('id')
+            ->get(['id', 'serviceman_id', 'amount', 'note', 'created_at'])
+            ->groupBy('serviceman_id');
+
+        foreach ($bookingLedgers->groupBy('serviceman_id') as $servicemanId => $ledgerGroup) {
+            $oldestFirst = $ledgerGroup->sortBy('created_at')->values();
+            $remainingByBooking = [];
+            foreach ($oldestFirst as $ledger) {
+                $remainingByBooking[] = PendingCollectionService::bookingDueShare($provider, (object) [
+                    'extra_fee' => $ledger->extra_fee,
+                    'total_tax_amount' => $ledger->total_tax_amount,
+                    'platform_fee' => $ledger->platform_fee ?? 0,
+                    'admin_commission' => $ledger->admin_share,
+                    'provider_commission' => $ledger->provider_share,
+                    'serviceman_earning' => $ledger->serviceman_earning,
+                ])['due'];
+                $ledger->serviceman_payment_history = [];
+                $ledger->serviceman_collected = 0.0;
+            }
+
+            $bookingIndex = 0;
+            foreach ($allCollections[$servicemanId] ?? [] as $receipt) {
+                $left = round((float) $receipt->amount, 2);
+                while ($left > 0.009 && $bookingIndex < $oldestFirst->count()) {
+                    if ($remainingByBooking[$bookingIndex] <= 0.009) {
+                        $bookingIndex++;
+                        continue;
+                    }
+                    $amount = round(min($left, $remainingByBooking[$bookingIndex]), 2);
+                    $ledger = $oldestFirst[$bookingIndex];
+                    $ledger->serviceman_collected = round($ledger->serviceman_collected + $amount, 2);
+                    $ledger->serviceman_payment_history[] = [
+                        'amount' => $amount,
+                        'note' => $receipt->note,
+                        'created_at' => $receipt->created_at,
+                    ];
+                    $left = round($left - $amount, 2);
+                    $remainingByBooking[$bookingIndex] = round($remainingByBooking[$bookingIndex] - $amount, 2);
+                    if ($remainingByBooking[$bookingIndex] <= 0.009) {
+                        $bookingIndex++;
+                    }
+                }
+            }
+        }
+
+        if ($from || $to) {
+            $bookingLedgers = $bookingLedgers->filter(function ($booking) use ($from, $to) {
+                $date = Carbon::parse($booking->created_at)->toDateString();
+                return (!$from || $date >= $from) && (!$to || $date <= $to);
+            })->values();
+        }
+
         return view('providermanagement::admin.pending-collection.show', compact(
             'provider',
             'servicemen',
@@ -168,6 +262,9 @@ class PendingCollectionController extends Controller
             'reviewSummary',
             'services',
             'totalServicemanPending',
+            'providerPayments',
+            'servicemanCollections',
+            'bookingLedgers',
         ));
     }
 

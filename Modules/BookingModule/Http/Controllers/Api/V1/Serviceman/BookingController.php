@@ -1219,8 +1219,35 @@ class BookingController extends Controller
                 ];
             })->values();
 
+            // Serviceman ka apna hissa ("your amount"). Completed booking par
+            // booking_details_amounts me jo snapshot hai usme admin panel ke
+            // "Extra Charge Distribution" (charge-owner) setting laga kar nikaalte
+            // hain — jo charge serviceman ke naam set hua ho wo uski kamai me jud
+            // jaata hai. Non-completed booking par snapshot final nahi hota, isliye
+            // null bhejte hain (app us row ko chhupa deti hai).
+            $yourAmount = null;
+            if ($booking->booking_status === 'completed') {
+                $bookingDetailsAmount = \Modules\BookingModule\Entities\BookingDetailsAmount::where('booking_id', $booking->id)
+                    ->whereNull('booking_repeat_id')
+                    ->first();
+                if ($bookingDetailsAmount) {
+                    $share = \Modules\ProviderManagement\Lib\PendingCollectionService::bookingDueShare(
+                        $booking->provider,
+                        (object) [
+                            'extra_fee' => $booking->extra_fee,
+                            'total_tax_amount' => $booking->total_tax_amount,
+                            'admin_commission' => $bookingDetailsAmount->admin_commission,
+                            'provider_commission' => $bookingDetailsAmount->provider_commission,
+                            'serviceman_earning' => $bookingDetailsAmount->serviceman_earning,
+                        ]
+                    );
+                    $yourAmount = $share['serviceman_earning'];
+                }
+            }
+
             return response()->json(response_formatter(DEFAULT_200, [
                 'booking' => $booking,
+                'your_amount' => $yourAmount,
                 'accept_remaining_seconds' => $acceptRemaining,
                 'can_accept_assignment' => $canAcceptAssignment,
                 'team' => $team,

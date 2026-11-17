@@ -342,6 +342,8 @@ class ConfigController extends Controller
                 ?? (((string) (business_config('additional_charge_label_name', 'booking_setup')?->live_values ?? '')) ?: 'Booking Fee'),
             'additional_charge_fee_amount' => bookingExtraFee($provider),
             'provider_tax_percent' => $providerTaxPercent,
+            'platform_fee' => providerIndependentPlatformFee($provider),
+            'platform_fee_label' => (trim((string) ($provider->platform_fee_label ?? '')) ?: 'Platform Fee'),
         ]), 200);
     }
 

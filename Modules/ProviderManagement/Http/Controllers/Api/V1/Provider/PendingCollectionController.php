@@ -310,10 +310,10 @@ class PendingCollectionController extends Controller
      */
     private function servicemanHistory(string $providerId, string $servicemanId, ?string $from, ?string $to, int $limit, int $offset): array
     {
-        $commissionSub = DB::table('transactions')
-            ->select('booking_id', DB::raw('SUM(credit) as commission_amount'))
-            ->whereIn('trx_type', ['payable_commission', 'payable_extra_fee'])
-            ->whereNotNull('booking_id')
+        // Har booking ki kul commission = admin_commission + provider_commission
+        $commissionSub = DB::table('booking_details_amounts')
+            ->select('booking_id', DB::raw('SUM(admin_commission + provider_commission) as commission_amount'))
+            ->whereNull('booking_repeat_id')
             ->groupBy('booking_id');
 
         $earningSub = DB::table('transactions')
@@ -348,10 +348,29 @@ class PendingCollectionController extends Controller
                 'b.created_at',
                 'sc.name as sub_category_name',
                 'mc.name as category_name',
-                DB::raw('COALESCE(c.commission_amount, 0) as commission_amount'),
+                DB::raw('COALESCE(c.commission_amount, 0) + (CASE WHEN b.booking_status = \'completed\' AND b.payment_method = \'cash_after_service\' THEN b.extra_fee ELSE 0 END) as commission_amount'),
                 DB::raw('COALESCE(e.earning_amount, 0) as earning_amount')
             )
             ->get();
+
+        $paymentAllocations = PendingCollectionService::servicemanPaymentAllocations($providerId, $servicemanId);
+        $dueEntries = PendingCollectionService::servicemanCommissionEntries(
+            $providerId,
+            $servicemanId,
+            $from,
+            $to
+        )->keyBy('booking_id');
+
+        foreach ($rows as $row) {
+            $allocations = $paymentAllocations[$row->id] ?? [];
+            $row->commission_amount = round((float) ($dueEntries[$row->id]->amount ?? $row->commission_amount), 2);
+            $row->serviceman_paid_amount = round(array_sum(array_column($allocations, 'amount')), 2);
+            $row->serviceman_pending_amount = round(max(
+                $row->commission_amount - $row->serviceman_paid_amount,
+                0
+            ), 2);
+            $row->serviceman_payment_history = $allocations;
+        }
 
         return [
             'total' => $total,

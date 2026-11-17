@@ -613,6 +613,45 @@ class ProviderController extends Controller
     }
 
     /**
+     * "Extra Charge Distribution" form se aaye charge->owner map ko clean karta hai.
+     * Sirf valid charge keys (providerChargeTypes) aur valid owners rakhta hai.
+     * Form me field na aaye to purani value waisi hi rehti hai (wipe nahi hoti).
+     * Kuch bhi set na ho to null return, taaki helper apne defaults laga le
+     * (aaj ka behaviour bilkul nahi badle).
+     */
+    private function normalizeExtraChargeOwners(Request $request, ?object $provider = null): ?array
+    {
+        if (!$request->has('extra_charge_owners')) {
+            return $provider->extra_charge_owners ?? null;
+        }
+
+        $input = $request->input('extra_charge_owners');
+        if (is_string($input)) {
+            $decoded = json_decode($input, true);
+            $input = is_array($decoded) ? $decoded : [];
+        }
+        if (!is_array($input)) {
+            return $provider->extra_charge_owners ?? null;
+        }
+
+        $validKeys = array_keys(providerChargeTypes());
+        $validOwners = array_keys(chargeOwnerOptions());
+
+        $map = [];
+        foreach ($validKeys as $key) {
+            if (!array_key_exists($key, $input)) {
+                continue;
+            }
+            $owner = $input[$key];
+            if (is_string($owner) && in_array($owner, $validOwners, true)) {
+                $map[$key] = $owner;
+            }
+        }
+
+        return empty($map) ? null : $map;
+    }
+
+    /**
      * Naya assignment likhta hai:
      *  - purani rows DELETE (slot free, warna unique index block karta rahega)
      *  - complete mains -> har main ke saare children rows (assign_type=complete)
@@ -735,6 +774,8 @@ class ProviderController extends Controller
             'booking_fee' => 'nullable|numeric|min:0',
             'custom_fees_enabled' => 'nullable|in:0,1',
             'booking_fee_label' => 'nullable|string|max:191',
+            'extra_charge_owners' => 'nullable|array',
+            'extra_charge_owners.*' => 'nullable|in:admin,provider,serviceman,final_amount',
             'calling_enabled' => 'nullable|in:0,1',
             'allowed_payment_methods' => 'nullable|array',
             'allowed_payment_methods.*' => 'string|max:191',
@@ -803,6 +844,7 @@ class ProviderController extends Controller
         $provider->booking_fee = (float) $request->input('booking_fee', 0);
         $provider->custom_fees_enabled = $request->has('custom_fees_enabled') ? 1 : 0;
         $provider->booking_fee_label = $request->filled('booking_fee_label') ? $request->input('booking_fee_label') : null;
+        $provider->extra_charge_owners = $this->normalizeExtraChargeOwners($request);
         $provider->calling_enabled = $request->has('calling_enabled') ? 1 : 0;
         $provider->allowed_payment_methods = json_encode(array_values(array_filter((array) $request->input('allowed_payment_methods', []))));
         $provider->zone_id = $request['zone_id'];
@@ -1226,6 +1268,8 @@ class ProviderController extends Controller
             'booking_fee' => 'nullable|numeric|min:0',
             'custom_fees_enabled' => 'nullable|in:0,1',
             'booking_fee_label' => 'nullable|string|max:191',
+            'extra_charge_owners' => 'nullable|array',
+            'extra_charge_owners.*' => 'nullable|in:admin,provider,serviceman,final_amount',
             'calling_enabled' => 'nullable|in:0,1',
             'allowed_payment_methods' => 'nullable|array',
             'allowed_payment_methods.*' => 'string|max:191',
@@ -1301,6 +1345,7 @@ class ProviderController extends Controller
         $provider->booking_fee = (float) $request->input('booking_fee', 0);
         $provider->custom_fees_enabled = $request->has('custom_fees_enabled') ? 1 : 0;
         $provider->booking_fee_label = $request->filled('booking_fee_label') ? $request->input('booking_fee_label') : null;
+        $provider->extra_charge_owners = $this->normalizeExtraChargeOwners($request, $provider);
         $provider->calling_enabled = $request->has('calling_enabled') ? 1 : 0;
         $provider->allowed_payment_methods = json_encode(array_values(array_filter((array) $request->input('allowed_payment_methods', []))));
         // Step 6: Service Permission (checkbox present = on, missing = off)

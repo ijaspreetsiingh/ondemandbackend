@@ -98,7 +98,7 @@ class Booking extends Model
         're_service_of'
     ];
 
-    protected $appends = ['evidence_photos_full_path', 'extra_fee_label'];
+    protected $appends = ['evidence_photos_full_path', 'extra_fee_label', 'platform_fee_label'];
 
     /**
      * Booking fee (extra_fee) ka label — checkout par provider ka apna label
@@ -132,6 +132,24 @@ class Booking extends Model
         }
 
         return self::$extraFeeLabelCache[$providerId] = $label;
+    }
+
+    /**
+     * Platform fee ka customer-visible label (provider ka apna label, warna
+     * "Platform Fee"). Sirf tab non-null jab booking me platform fee laga ho.
+     */
+    public function getPlatformFeeLabelAttribute(): ?string
+    {
+        if ((float) ($this->platform_fee ?? 0) <= 0) {
+            return null;
+        }
+
+        try {
+            $label = trim((string) ($this->provider?->platform_fee_label ?? ''));
+            return $label !== '' ? $label : 'Platform Fee';
+        } catch (\Throwable $exception) {
+            return 'Platform Fee';
+        }
     }
 
 

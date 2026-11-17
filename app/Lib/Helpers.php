@@ -1206,11 +1206,176 @@ if (!function_exists('providerAdminCommission')) {
     function providerAdminCommission($provider, float $baseAmount): float
     {
         if ((int) ($provider->independent_mode ?? 0) === 1) {
-            return ($baseAmount * (float) ($provider->admin_commission_percent ?? 0)) / 100
-                + (float) ($provider->platform_fee_amount ?? 0);
+            $commission = ($baseAmount * (float) ($provider->admin_commission_percent ?? 0)) / 100;
+
+            // Platform fee sirf tab admin ke commission me add hota hai jab uska
+            // owner 'admin' ho (dropdown default). Baaki owners (provider/
+            // serviceman/final_amount) calculateCommissionDetails / receivable
+            // math me route hote hain — ledger bhi isi helper se commission
+            // nikaalta hai, isliye yahan owner follow karna zaroori hai.
+            if (providerChargeOwner($provider, 'platform_fee') === 'admin') {
+                $commission += (float) ($provider->platform_fee_amount ?? 0);
+            }
+
+            return $commission;
         }
 
         return ($baseAmount * providerCommissionPercentage($provider)) / 100;
+    }
+}
+
+if (!function_exists('providerIndependentPlatformFee')) {
+    /**
+     * Provider ka flat platform fee (sirf independent mode me charge hota hai).
+     * Placement par customer ke total_booking_amount me judta hai.
+     */
+    function providerIndependentPlatformFee($provider): float
+    {
+        if (!providerIsIndependent($provider)) {
+            return 0.0;
+        }
+        return (float) ($provider->platform_fee_amount ?? 0);
+    }
+}
+
+if (!function_exists('providerBookingPlatformFee')) {
+    /**
+     * Booking par laga platform fee. Booking snapshot pehli preference
+     * (placement par frozen), warna provider ka live value (purani bookings).
+     */
+    function providerBookingPlatformFee($booking, $provider = null): float
+    {
+        $bookingFee = (float) ($booking->platform_fee ?? 0);
+        if ($bookingFee > 0) {
+            return $bookingFee;
+        }
+
+        if (empty($provider) && !empty($booking->provider_id)) {
+            $provider = \Modules\ProviderManagement\Entities\Provider::find($booking->provider_id);
+        }
+
+        return providerIndependentPlatformFee($provider);
+    }
+}
+
+if (!function_exists('providerBookingServiceCost')) {
+    /**
+     * Commissionable service cost — charge-owner settings ke hisab se.
+     * Baseline (defaults) bilkul purana wala formula: total - tax + discounts - extra_fee.
+     * Sirf 2 cheezein alag:
+     *  - owner 'final_amount' wala charge base ke ANDAR rahta hai (commission % se batega),
+     *    isliye usko subtract nahi karte.
+     *  - platform_fee ab placement se customer ke total me included hai; owner
+     *    'final_amount' na ho to base se bahar rakhte hain (owner-wise routing
+     *    snapshot/receivable me hoti hai).
+     */
+    function providerBookingServiceCost($booking, $provider = null): float
+    {
+        if (empty($provider) && !empty($booking->provider_id)) {
+            $provider = \Modules\ProviderManagement\Entities\Provider::find($booking->provider_id);
+        }
+        $owners = providerChargeOwners($provider);
+
+        $cost = (float) ($booking->total_booking_amount ?? 0)
+            - (float) ($booking->total_tax_amount ?? 0)
+            + (float) ($booking->total_discount_amount ?? 0)
+            + (float) ($booking->total_campaign_discount_amount ?? 0)
+            + (float) ($booking->total_coupon_discount_amount ?? 0)
+            - (float) ($booking->extra_fee ?? 0);
+
+        if (($owners['extra_fee'] ?? 'admin') === 'final_amount') {
+            $cost += (float) ($booking->extra_fee ?? 0);
+        }
+
+        if (($owners['tax'] ?? 'provider') === 'final_amount') {
+            $cost += (float) ($booking->total_tax_amount ?? 0);
+        }
+
+        $platformFee = (float) ($booking->platform_fee ?? 0);
+        if ($platformFee > 0 && ($owners['platform_fee'] ?? 'admin') !== 'final_amount') {
+            $cost -= $platformFee;
+        }
+
+        return $cost;
+    }
+}
+
+if (!function_exists('providerBookingProviderReceivable')) {
+    /**
+     * Provider ko finally kitna milna chahiye (ledger receivable + snapshot
+     * provider_earning ke liye ek hi source of truth).
+     * Baseline (defaults: extra_fee=admin, tax=provider, platform_fee=admin)
+     * = total - admin_commission - extra_fee (purana behaviour).
+     */
+    function providerBookingProviderReceivable($booking, float $adminCommission, $provider = null): float
+    {
+        if (empty($provider) && !empty($booking->provider_id)) {
+            $provider = \Modules\ProviderManagement\Entities\Provider::find($booking->provider_id);
+        }
+        $owners = providerChargeOwners($provider);
+
+        $receivable = (float) ($booking->total_booking_amount ?? 0) - $adminCommission;
+
+        // extra_fee: owner 'provider' ho to provider khud rakhta hai (receivable
+        // me rahega); 'serviceman' ho to serviceman cash me rakhta hai (bahar);
+        // 'admin' ho to alag ledger entry hoti hai (bahar); 'final_amount' ho to
+        // charge commission base ke andar hai — receivable se SUBTRACT NAHI
+        // karna (warna double-count hoga, commissions me already hai).
+        $extraFeeOwner = $owners['extra_fee'] ?? 'admin';
+        if ($extraFeeOwner === 'admin' || $extraFeeOwner === 'serviceman') {
+            $receivable -= (float) ($booking->extra_fee ?? 0);
+        }
+
+        // tax: default owner 'provider' (receivable me hi rehta hai).
+        // admin/serviceman owner par receivable se bahar (admin ledger entry
+        // banata hai / serviceman cash me rakhta hai).
+        $taxOwner = $owners['tax'] ?? 'provider';
+        if ($taxOwner === 'admin' || $taxOwner === 'serviceman') {
+            $receivable -= (float) ($booking->total_tax_amount ?? 0);
+        }
+
+        // platform_fee (placement se total me included): owner 'serviceman'
+        // par receivable se bahar (serviceman cash me rakhta hai). admin owner
+        // par admin_commission me already included. provider/final_amount par
+        // receivable me hi rehta hai.
+        $platformFee = (float) ($booking->platform_fee ?? 0);
+        if ($platformFee > 0 && ($owners['platform_fee'] ?? 'admin') === 'serviceman') {
+            $receivable -= $platformFee;
+        }
+
+        return $receivable;
+    }
+}
+
+if (!function_exists('providerBookingExtraFeeGoesToAdmin')) {
+    /**
+     * Kya is booking ka extra_fee admin ko jayega (ledger entry banegi)?
+     * Baseline true (default owner admin). Provider/serviceman/final_amount
+     * par admin ki alag entry nahi banti.
+     */
+    function providerBookingExtraFeeGoesToAdmin($booking, $provider = null): bool
+    {
+        if (empty($provider) && !empty($booking->provider_id)) {
+            $provider = \Modules\ProviderManagement\Entities\Provider::find($booking->provider_id);
+        }
+
+        return providerChargeOwner($provider, 'extra_fee') === 'admin';
+    }
+}
+
+if (!function_exists('providerBookingTaxGoesToAdmin')) {
+    /**
+     * Kya is booking ka tax admin ko jayega (ledger entry banegi)?
+     * Default owner 'provider' hai, isliye baseline false — purana behaviour
+     * (koi tax ledger entry nahi) maintain rehta hai.
+     */
+    function providerBookingTaxGoesToAdmin($booking, $provider = null): bool
+    {
+        if (empty($provider) && !empty($booking->provider_id)) {
+            $provider = \Modules\ProviderManagement\Entities\Provider::find($booking->provider_id);
+        }
+
+        return providerChargeOwner($provider, 'tax') === 'admin';
     }
 }
 
@@ -1380,6 +1545,192 @@ if (!function_exists('providerTaxForBooking')) {
             $providerCache[$providerId] = \Modules\ProviderManagement\Entities\Provider::find($providerId);
         }
         return providerEffectiveTaxPercent($providerCache[$providerId], $serviceTax);
+    }
+}
+
+if (!function_exists('providerChargeTypes')) {
+    /**
+     * "Extra Charge Distribution" ke charge types (admin panel dropdowns).
+     * key => [label, default owner]. Default owner = purana behaviour, taaki
+     * kuch set na karne par system aaj jaisa hi chale.
+     */
+    function providerChargeTypes(): array
+    {
+        return [
+            'extra_fee' => ['label' => 'Visiting / Global Extra Charge', 'default' => 'admin'],
+            'tax' => ['label' => 'Tax', 'default' => 'provider'],
+            'platform_fee' => ['label' => 'Payment / Platform Fee', 'default' => 'admin'],
+        ];
+    }
+}
+
+if (!function_exists('chargeOwnerOptions')) {
+    /**
+     * Dropdown options — charge ka paisa kisko milega.
+     */
+    function chargeOwnerOptions(): array
+    {
+        return [
+            'admin' => 'Admin',
+            'provider' => 'Provider',
+            'serviceman' => 'Serviceman',
+            'final_amount' => 'Final Payment (normal commission)',
+        ];
+    }
+}
+
+if (!function_exists('providerChargeOwners')) {
+    /**
+     * Provider ka poora charge->owner map. Missing keys default se bhare jaate
+     * hain, isliye purane providers ka behaviour bilkul nahi badalta.
+     */
+    function providerChargeOwners($provider): array
+    {
+        $map = [];
+        foreach (providerChargeTypes() as $key => $meta) {
+            $map[$key] = $meta['default'];
+        }
+
+        if (empty($provider)) {
+            return $map;
+        }
+
+        $saved = $provider->extra_charge_owners ?? null;
+        if (is_string($saved)) {
+            $saved = json_decode($saved, true);
+        }
+        if (!is_array($saved)) {
+            return $map;
+        }
+
+        $allowed = array_keys(chargeOwnerOptions());
+        foreach ($saved as $key => $owner) {
+            if (isset($map[$key]) && is_string($owner) && in_array($owner, $allowed, true)) {
+                $map[$key] = $owner;
+            }
+        }
+
+        return $map;
+    }
+}
+
+if (!function_exists('providerChargeOwner')) {
+    /**
+     * Ek charge ka owner. Unknown key -> final_amount (safe fallback).
+     */
+    function providerChargeOwner($provider, string $key): string
+    {
+        $owners = providerChargeOwners($provider);
+        return $owners[$key] ?? 'final_amount';
+    }
+}
+
+if (!function_exists('providerBookingChargeAmounts')) {
+    /**
+     * Us booking par lage extra charge amounts (jo customer ke final payment
+     * me aate hain — serviceman cash me yahi collect karta hai).
+     */
+    function providerBookingChargeAmounts($booking, $provider = null): array
+    {
+        if (empty($provider) && !empty($booking->provider_id)) {
+            $provider = \Modules\ProviderManagement\Entities\Provider::find($booking->provider_id);
+        }
+
+        return [
+            'extra_fee' => (float) ($booking->extra_fee ?? 0),
+            'tax' => (float) ($booking->total_tax_amount ?? 0),
+            'platform_fee' => providerBookingPlatformFee($booking, $provider),
+        ];
+    }
+}
+
+if (!function_exists('providerBookingChargeSplit')) {
+    /**
+     * Booking ke charges ko owner ke hisab se baant do.
+     * Returns ['admin' => x, 'provider' => y, 'serviceman' => z].
+     * 'final_amount' wale charges yahan nahi aate — wo commission base me
+     * count hote hain (admin%/provider% se bat jaate hain).
+     */
+    function providerBookingChargeSplit($provider, array $charges): array
+    {
+        $owners = providerChargeOwners($provider);
+        $split = ['admin' => 0.0, 'provider' => 0.0, 'serviceman' => 0.0];
+
+        foreach ($charges as $key => $amount) {
+            $owner = $owners[$key] ?? 'final_amount';
+            if ($owner === 'final_amount') {
+                continue;
+            }
+            if (isset($split[$owner])) {
+                $split[$owner] += (float) $amount;
+            }
+        }
+
+        return $split;
+    }
+}
+
+if (!function_exists('providerBookingServicemanOwnedCharges')) {
+    /**
+     * Sirf wo charges jo serviceman ke hisse me gaye (uski earning ka hissa).
+     */
+    function providerBookingServicemanOwnedCharges($provider, array $charges): float
+    {
+        return (float) (providerBookingChargeSplit($provider, $charges)['serviceman'] ?? 0);
+    }
+}
+
+if (!function_exists('providerBookingChargeDueAdjustment')) {
+    /**
+     * Charge-owner setting ke hisab se ek booking ke "due" (jo serviceman provider
+     * ko wapas deta hai) aur serviceman ki kamai me kitna adjust karna hai.
+     *
+     * Baseline (kuch set na ho to) bilkul aaj jaisa rehta hai:
+     *   due              = admin_commission + provider_commission + extra_fee
+     *   serviceman earning = bd_amounts.serviceman_earning
+     *
+     * Rule (charge-by-charge, kyunki har charge ka baseline alag hai):
+     *  - extra_fee : default due ke andar hai (admin ko jata hai, ledger entry
+     *    payable/received_extra_fee banati hai). Owner 'serviceman' ho to due se
+     *    nikal ke serviceman ki kamai me jod do. Owner 'provider' ho to due
+     *    jaisa hai waisa (provider rakhta hai). Owner 'final_amount' ho to
+     *    charge commission base ke andar hai (admin/provider % split) — due me
+     *    double-count na ho isliye due se nikal do.
+     *  - platform_fee : snapshot (calculateCommissionDetails) owner ke hisab se
+     *    hi route karta hai, isliye yahan koi adjustment nahi.
+     *  - tax : default owner 'provider' — serviceman provider ko wapas dega
+     *    (due me jod do, purani design galti thi jisme tax kisi ke paas account
+     *    nahi hota tha). Owner 'admin' ho to bhi due me jod do (provider admin
+     *    ko forward karega). Owner 'serviceman' ho to serviceman ki kamai me
+     *    dikhao. Owner 'final_amount' ho to kuch change nahi (commission split).
+     *
+     * @return array{due: float, serviceman: float}
+     */
+    function providerBookingChargeDueAdjustment($provider, array $charges): array
+    {
+        $owners = providerChargeOwners($provider);
+        $dueAdjust = 0.0;
+        $servicemanAdjust = 0.0;
+
+        $extraFee = (float) ($charges['extra_fee'] ?? 0);
+        $tax = (float) ($charges['tax'] ?? 0);
+
+        $extraFeeOwner = $owners['extra_fee'] ?? 'admin';
+        if ($extraFeeOwner === 'serviceman') {
+            $dueAdjust -= $extraFee;
+            $servicemanAdjust += $extraFee;
+        } elseif ($extraFeeOwner === 'final_amount') {
+            $dueAdjust -= $extraFee;
+        }
+
+        $taxOwner = $owners['tax'] ?? 'provider';
+        if ($taxOwner === 'serviceman') {
+            $servicemanAdjust += $tax;
+        } elseif ($taxOwner === 'admin' || $taxOwner === 'provider') {
+            $dueAdjust += $tax;
+        }
+
+        return ['due' => $dueAdjust, 'serviceman' => $servicemanAdjust];
     }
 }
 

@@ -139,6 +139,9 @@
                                 <th>{{translate('Service_Man')}}</th>
                                 <th>{{translate('Total_Bookings')}}</th>
                                 <th>{{translate('Completed')}}</th>
+                                <th>{{translate('Earning_Amount')}}</th>
+                                <th>{{translate('Due_Amount')}}</th>
+                                <th>{{translate('Collected_Amount')}}</th>
                                 <th>{{translate('Pending_Amount')}}</th>
                                 <th>{{translate('Reviews')}}</th>
                                 <th>{{translate('Status')}}</th>
@@ -156,6 +159,9 @@
                                     </td>
                                     <td>{{$serviceman['total_bookings']}}</td>
                                     <td>{{$serviceman['completed_bookings']}}</td>
+                                    <td>{{with_currency_symbol($serviceman['earning_amount'])}}</td>
+                                    <td>{{with_currency_symbol($serviceman['due_amount'])}}</td>
+                                    <td class="text-success">{{with_currency_symbol($serviceman['collected_amount'])}}</td>
                                     <td>
                                         <span class="fw-bold {{$serviceman['pending_amount'] > 0 ? 'text-danger' : 'text-success'}}">
                                             {{with_currency_symbol($serviceman['pending_amount'])}}
@@ -184,7 +190,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="7" class="text-center py-5 text-muted">
+                                    <td colspan="10" class="text-center py-5 text-muted">
                                         {{translate('No_service_man_found')}}
                                     </td>
                                 </tr>
@@ -192,6 +198,81 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <div class="col-xl-6"><div class="card h-100"><div class="card-body">
+                    <h5 class="mb-3">{{translate('Provider_Payments_Received')}}</h5>
+                    <div class="table-responsive"><table class="table align-middle">
+                        <thead><tr><th>{{translate('Date')}}</th><th>{{translate('Amount')}}</th><th>{{translate('Transaction_ID')}}</th></tr></thead>
+                        <tbody>
+                        @forelse($providerPayments as $payment)
+                            <tr><td>{{\Carbon\Carbon::parse($payment->created_at)->format('d M, Y h:i A')}}</td>
+                                <td class="text-success fw-semibold">{{with_currency_symbol($payment->amount)}}</td><td><small>{{$payment->id}}</small></td></tr>
+                        @empty
+                            <tr><td colspan="3" class="text-center text-muted py-4">{{translate('No_payment_found')}}</td></tr>
+                        @endforelse
+                        </tbody>
+                    </table></div>
+                </div></div></div>
+                <div class="col-xl-6"><div class="card h-100"><div class="card-body">
+                    <h5 class="mb-3">{{translate('Service_Man_Collections')}}</h5>
+                    <div class="table-responsive"><table class="table align-middle">
+                        <thead><tr><th>{{translate('Service_Man')}}</th><th>{{translate('Date')}}</th><th>{{translate('Amount')}}</th><th>{{translate('Note')}}</th></tr></thead>
+                        <tbody>
+                        @forelse($servicemanCollections as $collection)
+                            <tr><td>{{trim(($collection->first_name ?? '') . ' ' . ($collection->last_name ?? ''))}}</td>
+                                <td>{{\Carbon\Carbon::parse($collection->created_at)->format('d M, Y h:i A')}}</td>
+                                <td class="text-success fw-semibold">{{with_currency_symbol($collection->amount)}}</td>
+                                <td>{{$collection->note ?: '-'}}</td></tr>
+                        @empty
+                            <tr><td colspan="4" class="text-center text-muted py-4">{{translate('No_payment_found')}}</td></tr>
+                        @endforelse
+                        </tbody>
+                    </table></div>
+                </div></div></div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="mb-3">{{translate('Booking_Settlement_Details')}}</h5>
+                    <div class="table-responsive"><table class="table align-middle">
+                        <thead><tr><th>{{translate('Booking')}}</th><th>{{translate('Date')}}</th>
+                            <th>{{translate('Service_Name')}}</th><th>{{translate('Service_Man')}}</th>
+                            <th>{{translate('Customer_Paid')}}</th><th>{{translate('Admin_Commission')}}</th>
+                            <th>{{translate('Provider_Commission')}}</th><th>{{translate('Service_Man_Earning')}}</th>
+                            <th>{{translate('Service_Man_Paid_to_Provider')}}</th><th>{{translate('Extra_Fee')}}</th><th>{{translate('Tax')}}</th></tr></thead>
+                        <tbody>
+                        @forelse($bookingLedgers as $booking)
+                            <tr><td><a href="{{route('admin.booking.details', [$booking->id, 'web_page' => 'details'])}}">#{{$booking->readable_id}}</a></td>
+                                <td>{{\Carbon\Carbon::parse($booking->created_at)->format('d M, Y')}}</td>
+                                <td>{{$booking->sub_category_name ?: ($booking->category_name ?: '-')}}</td>
+                                <td>{{trim(($booking->serviceman_first_name ?? '') . ' ' . ($booking->serviceman_last_name ?? '')) ?: '-'}}</td>
+                                <td>{{with_currency_symbol($booking->total_booking_amount)}}</td>
+                                <td>{{with_currency_symbol($booking->admin_share)}}</td>
+                                <td>{{with_currency_symbol($booking->provider_share)}}</td>
+                                <td>{{with_currency_symbol($booking->serviceman_earning)}}</td>
+                                <td>{{with_currency_symbol($booking->serviceman_collected)}}
+                                    @if(count($booking->serviceman_payment_history))
+                                        <details><summary>{{translate('Payment_History')}}</summary>
+                                            @foreach($booking->serviceman_payment_history as $receipt)
+                                                <div class="small text-nowrap">
+                                                    {{with_currency_symbol($receipt['amount'])}}
+                                                    · {{\Carbon\Carbon::parse($receipt['created_at'])->format('d M, Y h:i A')}}
+                                                    @if(!empty($receipt['note'])) · {{$receipt['note']}} @endif
+                                                </div>
+                                            @endforeach
+                                        </details>
+                                    @endif
+                                </td>
+                                <td>{{with_currency_symbol($booking->extra_fee)}}</td>
+                                <td>{{with_currency_symbol($booking->total_tax_amount)}}</td></tr>
+                        @empty
+                            <tr><td colspan="11" class="text-center py-5 text-muted">{{translate('No_booking_found')}}</td></tr>
+                        @endforelse
+                        </tbody>
+                    </table></div>
                 </div>
             </div>
 

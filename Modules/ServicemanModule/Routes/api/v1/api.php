@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Modules\ServicemanModule\Http\Controllers\Api\V1\Serviceman\ConfigController as ServicemanConfigController;
+use Modules\ServicemanModule\Http\Controllers\Api\V1\Serviceman\PendingCollectionController as ServicemanPendingCollectionController;
 use Modules\ServicemanModule\Http\Controllers\Api\V1\Provider\ServicemanController as ServicemanProviderController;
 use Modules\ServicemanModule\Http\Controllers\Api\V1\Serviceman\ServicemanController;
 
@@ -55,6 +56,13 @@ Route::group(['prefix' => 'technician', 'as' => 'serviceman.', 'namespace' => 'A
         Route::get('work-status', [ServicemanController::class, 'getWorkStatus']);
         Route::put('modify/position', [ServicemanController::class, 'updateLocation']);
         Route::get('push-alerts', [ServicemanController::class, 'pushNotifications']);
+
+        // Pending collection / earnings — serviceman app ka "Earnings" tab
+        Route::group(['prefix' => 'pending-collection'], function () {
+            Route::get('summary', [ServicemanPendingCollectionController::class, 'summary']);
+            Route::get('/', [ServicemanPendingCollectionController::class, 'index']);
+            Route::get('{id}', [ServicemanPendingCollectionController::class, 'show']);
+        });
 
         Route::group(['prefix' => 'account', 'middleware' => ['auth:api']], function () {
             Route::put('dossier', [ServicemanController::class, 'profileInfo']);

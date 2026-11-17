@@ -203,9 +203,11 @@ trait BookingTrait
                 $totalBookingAmount -= $referralDiscount;
 
                 $bookingProviderId = $cartData->first()->provider_id;
-                $extraFee = bookingExtraFee($bookingProviderId ? Provider::find($bookingProviderId) : null);
+                $bookingProvider = $bookingProviderId ? Provider::find($bookingProviderId) : null;
+                $extraFee = bookingExtraFee($bookingProvider);
+                $platformFee = providerIndependentPlatformFee($bookingProvider);
 
-                $totalBookingAmount += $extraFee;
+                $totalBookingAmount += $extraFee + $platformFee;
 
                 $booking->customer_id = $userId;
                 $booking->provider_id = $cartData->first()->provider_id;
@@ -227,6 +229,7 @@ trait BookingTrait
                 $booking->booking_otp = (string) random_int(100000, 999999);
                 $booking->is_guest = $isGuest;
                 $booking->extra_fee = $extraFee;
+                $booking->platform_fee = $platformFee;
                 $booking->total_referral_discount_amount = $referralDiscount;
                 $booking->service_address_location = json_encode(UserAddress::find($request['service_address_id'])) ?? null;
                 $booking->service_location = $request['service_location'];
@@ -517,7 +520,9 @@ trait BookingTrait
                 $repeatLockProviderId = getServiceSingleProviderLockId($cartData->pluck('service_id'));
                 $repeatProviderId = $repeatLockProviderId ?: $cartData->first()->provider_id;
 
-                $extraFee = bookingExtraFee($repeatProviderId ? Provider::find($repeatProviderId) : null);
+                $repeatProvider = $repeatProviderId ? Provider::find($repeatProviderId) : null;
+                $extraFee = bookingExtraFee($repeatProvider);
+                $platformFee = providerIndependentPlatformFee($repeatProvider);
 
                 $repeatBookingSchedule = json_decode($request['dates'], true);
                 $totalDate = count($repeatBookingSchedule);
@@ -561,12 +566,13 @@ trait BookingTrait
                 $booking->booking_status = 'pending';
                 $booking->payment_method = $request['payment_method'];
                 $booking->is_paid = $request['payment_method'] == 'cash_after_service' || $request['payment_method'] == 'offline_payment' ? 0 : 1;
-                $booking->total_booking_amount = ($totalBookingAmount * $totalDate) + $extraFee;
+                $booking->total_booking_amount = ($totalBookingAmount * $totalDate) + $extraFee + $platformFee;
                 $booking->total_tax_amount = $cartData->sum('tax_amount') * $totalDate;
                 $booking->total_discount_amount = $cartData->sum('discount_amount') * $totalDate;
                 $booking->total_campaign_discount_amount = $cartData->sum('campaign_discount') * $totalDate;
                 $booking->total_coupon_discount_amount = $totalDiscount;
                 $booking->extra_fee = $extraFee;
+                $booking->platform_fee = $platformFee;
                 $booking->total_referral_discount_amount = $referralDiscount;
                 $booking->coupon_code = $cartData->first()->coupon_code;
                 $booking->service_address_id = $request['service_address_id'] ?? '';
@@ -605,7 +611,7 @@ trait BookingTrait
                     $repeatBooking->payment_method = $request['payment_method'];
                     $repeatBooking->is_paid = $request['payment_method'] == 'cash_after_service' || $request['payment_method'] == 'offline_payment' ? 0 : 1;
                     $repeatBooking->service_schedule = date('Y-m-d H:i:s', strtotime($repeat['date'])) ?? now()->addHours(5);
-                    $repeatBooking->total_booking_amount = $index < 1 ? $totalBookingAmount + $extraFee : $totalBookingAmount;
+                    $repeatBooking->total_booking_amount = $index < 1 ? $totalBookingAmount + $extraFee + $platformFee : $totalBookingAmount;
                     $repeatBooking->total_tax_amount = $cartData->sum('tax_amount');
                     $repeatBooking->total_discount_amount = $cartData->sum('discount_amount');
                     $repeatBooking->total_campaign_discount_amount = $cartData->sum('campaign_discount');
@@ -617,6 +623,7 @@ trait BookingTrait
                         $repeatBooking->coupon_code = null;
                     }
                     $repeatBooking->extra_fee = $index < 1 ? $extraFee : 0;
+                    $repeatBooking->platform_fee = $index < 1 ? $platformFee : 0;
                     $repeatBooking->total_referral_discount_amount = $index < 1 ? $referralDiscount : 0;
                     $repeatBooking->booking_otp = (string) random_int(100000, 999999);
                     $repeatBooking->readable_id = $booking->readable_id . '-' . $suffix;
@@ -790,8 +797,9 @@ trait BookingTrait
             }
 
             $extraFee = bookingExtraFee($biddingProvider);
+            $platformFee = providerIndependentPlatformFee($biddingProvider);
 
-            $totalBookingAmount += $extraFee;
+            $totalBookingAmount += $extraFee + $platformFee;
 
             $booking->customer_id = $customerUserId;
             $booking->provider_id = $data['provider_id'];
@@ -812,6 +820,7 @@ trait BookingTrait
             $booking->booking_otp = (string) random_int(100000, 999999);
             $booking->is_guest = 0;
             $booking->extra_fee = $extraFee;
+            $booking->platform_fee = $platformFee;
             $booking->total_referral_discount_amount = $referralDiscount;
             $booking->save();
 
@@ -1885,9 +1894,12 @@ trait BookingTrait
         $adminCommissionWithoutCost = $commissionDetails['adminCommissionWithoutCost'];
 
         // P3 fix: provider_earning wahi rakde jo ledger (Transaction::payable...)
-        // provider ko deta hai = total - adminCommission - extra_fee. Booking fee
-        // provider_earning me andar thi to report ledger se zyada dikhati thi.
-        $bookingAmountWithoutCommission = $booking['total_booking_amount'] - $adminCommissionWithoutCost - (float) ($booking['extra_fee'] ?? 0);
+        // provider ko deta hai = providerBookingProviderReceivable(). Ab charge
+        // owner settings follow hoti hain — extra_fee owner 'provider' ho to
+        // provider ki earning me rahega, tax owner 'admin'/'serviceman' ho to
+        // bahar jayega, platform fee owner-wise route hoga. Defaults par
+        // formula bilkul purana hai (total - admin - extra_fee).
+        $bookingAmountWithoutCommission = providerBookingProviderReceivable($booking, $adminCommissionWithoutCost);
 
         if (isset($booking->booking_id)){
             $bookingAmountDetailAmount = BookingDetailsAmount::where('booking_repeat_id', $booking->id)->first();
@@ -1925,7 +1937,7 @@ trait BookingTrait
             ];
         }
 
-        $serviceCost = $booking['total_booking_amount'] - $booking['total_tax_amount'] + $booking['total_discount_amount'] + $booking['total_campaign_discount_amount'] + $booking['total_coupon_discount_amount'] - $booking['extra_fee'];
+        $serviceCost = providerBookingServiceCost($booking);
 
         $promotionalCostByAdmin = 0;
         $promotionalCostByProvider = 0;
@@ -1943,16 +1955,59 @@ trait BookingTrait
         $servicemanEarning = 0;
 
         if ((int) ($provider->independent_mode ?? 0) === 1) {
-            // Independent Mode: admin X% + flat fee, provider Y%, rest = serviceman
+            // Independent Mode: admin X%, provider Y%, remainder = serviceman.
+            // Platform fee ka routing ab "Extra Charge Distribution" dropdown
+            // ke hisab se hota hai (default 'admin' = purana behaviour).
             $adminPercent = (float) $provider->admin_commission_percent;
             $providerPercent = (float) $provider->provider_commission_percent;
-            $platformFee = (float) $provider->platform_fee_amount;
+            $platformFee = providerBookingPlatformFee($booking, $provider);
+            $platformFeeOwner = providerChargeOwner($provider, 'platform_fee');
+            // Naye bookings me pf customer ke total me included hai (cost se
+            // subtract hua). Purani bookings (platform_fee=0) me pf provider ke
+            // share se kata tha — wahan earning se hi katna hai (legacy).
+            $platformFeeInTotal = (float) ($booking['platform_fee'] ?? 0) > 0;
 
             $adminCommissionBase = ($providerReceivableTotalAmount * $adminPercent) / 100;
-            $providerCommission = ($providerReceivableTotalAmount * $providerPercent) / 100;
+            $providerCommissionBase = ($providerReceivableTotalAmount * $providerPercent) / 100;
 
-            $adminCommission = $adminCommissionBase + $platformFee;
-            $servicemanEarning = max(0, $providerReceivableTotalAmount - $adminCommissionBase - $platformFee - $providerCommission);
+            switch ($platformFeeOwner) {
+                case 'provider':
+                    // Platform fee provider ka — uski commission me judta hai.
+                    $adminCommission = $adminCommissionBase;
+                    $providerCommission = $providerCommissionBase + $platformFee;
+                    break;
+
+                case 'serviceman':
+                    // Platform fee serviceman ki earning ka hissa.
+                    $adminCommission = $adminCommissionBase;
+                    $providerCommission = $providerCommissionBase;
+                    break;
+
+                case 'final_amount':
+                    // Platform fee commissionable base me hi hai (serviceCost
+                    // se subtract nahi hua) — admin/provider % se bat gaya.
+                    $adminCommission = $adminCommissionBase;
+                    $providerCommission = $providerCommissionBase;
+                    break;
+
+                case 'admin':
+                default:
+                    // Default: platform fee flat admin commission.
+                    $adminCommission = $adminCommissionBase + $platformFee;
+                    $providerCommission = $providerCommissionBase;
+                    break;
+            }
+
+            // Pf ka earning-side adjustment — upar wale routing ko balance
+            // rakhne ke liye (warna pf double/subtract miss ho jata hai).
+            if ($platformFeeInTotal && $platformFeeOwner === 'serviceman') {
+                $servicemanEarning = max(0, $providerReceivableTotalAmount - $adminCommissionBase - $providerCommissionBase) + $platformFee;
+            } elseif (!$platformFeeInTotal && in_array($platformFeeOwner, ['admin', 'provider'], true)) {
+                // Legacy booking: pf provider ke share se kata tha
+                $servicemanEarning = max(0, $providerReceivableTotalAmount - $adminCommissionBase - $platformFee - $providerCommissionBase);
+            } else {
+                $servicemanEarning = max(0, $providerReceivableTotalAmount - $adminCommissionBase - $providerCommissionBase);
+            }
         } else {
             $adminCommission = providerAdminCommission($provider, $providerReceivableTotalAmount);
             // Default mode: provider keeps the full provider-side amount (total - admin commission)

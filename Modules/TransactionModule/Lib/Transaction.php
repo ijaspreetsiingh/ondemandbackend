@@ -547,7 +547,7 @@ if (!function_exists('removeBookingServiceTransactionForDigitalPayment')) {
 if (!function_exists('completeBookingTransactionForDigitalPayment')) {
     function completeBookingTransactionForDigitalPayment($booking): void
     {
-        $service_cost = $booking['total_booking_amount'] - $booking['total_tax_amount'] + $booking['total_discount_amount'] + $booking['total_campaign_discount_amount'] + $booking['total_coupon_discount_amount'] - $booking['extra_fee'];
+        $service_cost = providerBookingServiceCost($booking);
 
         //cost bearing (promotional)
         $booking_details_amounts = BookingDetailsAmount::where('booking_id', $booking->id)->get();
@@ -573,7 +573,7 @@ if (!function_exists('completeBookingTransactionForDigitalPayment')) {
         }
 
         //total booking amount (without commission)
-        $booking_amount_without_commission = $booking['total_booking_amount'] - $admin_commission - $booking['extra_fee'];
+        $booking_amount_without_commission = providerBookingProviderReceivable($booking, $admin_commission);
 
         //user ids (from/to)
         $admin_user_id = User::where('user_type', ADMIN_USER_TYPES[0])->first()->id;
@@ -637,8 +637,8 @@ if (!function_exists('completeBookingTransactionForDigitalPayment')) {
                 ]);
             }
 
-            //admin extra fee transaction
-            if($booking['extra_fee'] > 0) {
+            //admin extra fee transaction (sirf jab extra_fee ka owner 'admin' ho)
+            if($booking['extra_fee'] > 0 && providerBookingExtraFeeGoesToAdmin($booking)) {
                 //Admin transactions for extra fee (+received_balance)
                 $account = Account::where('user_id', $admin_user_id)->first();
                 $account->received_balance += $booking['extra_fee'];
@@ -650,6 +650,27 @@ if (!function_exists('completeBookingTransactionForDigitalPayment')) {
                     'trx_type' => TRX_TYPE['received_extra_fee'],
                     'debit' => 0,
                     'credit' => $booking['extra_fee'],
+                    'balance' => $account->received_balance,
+                    'from_user_id' => $admin_user_id,
+                    'to_user_id' => $admin_user_id,
+                    'from_user_account' => ACCOUNT_STATES[1]['value'],
+                    'to_user_account' => null
+                ]);
+            }
+
+            //admin tax transaction (sirf jab tax ka owner 'admin' ho)
+            if($booking['total_tax_amount'] > 0 && providerBookingTaxGoesToAdmin($booking)) {
+                //Admin transactions for tax (+received_balance)
+                $account = Account::where('user_id', $admin_user_id)->first();
+                $account->received_balance += $booking['total_tax_amount'];
+                $account->save();
+
+                Transaction::create([
+                    'ref_trx_id' => $primary_transaction['id'],
+                    'booking_id' => $booking['id'],
+                    'trx_type' => TRX_TYPE['received_tax'],
+                    'debit' => 0,
+                    'credit' => $booking['total_tax_amount'],
                     'balance' => $account->received_balance,
                     'from_user_id' => $admin_user_id,
                     'to_user_id' => $admin_user_id,
@@ -690,7 +711,7 @@ if (!function_exists('completeBookingTransactionForDigitalPayment')) {
 if (!function_exists('completeBookingRepeatTransactionForDigitalPayment')) {
     function completeBookingRepeatTransactionForDigitalPayment($booking): void
     {
-        $service_cost = $booking['total_booking_amount'] - $booking['total_tax_amount'] + $booking['total_discount_amount'] + $booking['total_campaign_discount_amount'] + $booking['total_coupon_discount_amount'] - $booking['extra_fee'];
+        $service_cost = providerBookingServiceCost($booking);
 
         //cost bearing (promotional)
         $booking_details_amounts = BookingDetailsAmount::where('booking_repeat_id', $booking->id)->get();
@@ -716,7 +737,7 @@ if (!function_exists('completeBookingRepeatTransactionForDigitalPayment')) {
         }
 
         //total booking amount (without commission)
-        $booking_amount_without_commission = $booking['total_booking_amount'] - $admin_commission - $booking['extra_fee'];
+        $booking_amount_without_commission = providerBookingProviderReceivable($booking, $admin_commission);
 
         //user ids (from/to)
         $admin_user_id = User::where('user_type', ADMIN_USER_TYPES[0])->first()->id;
@@ -783,8 +804,8 @@ if (!function_exists('completeBookingRepeatTransactionForDigitalPayment')) {
                 ]);
             }
 
-            //admin extra fee transaction
-            if($booking['extra_fee'] > 0) {
+            //admin extra fee transaction (sirf jab extra_fee ka owner 'admin' ho)
+            if($booking['extra_fee'] > 0 && providerBookingExtraFeeGoesToAdmin($booking)) {
                 //Admin transactions for extra fee (+received_balance)
                 $account = Account::where('user_id', $admin_user_id)->first();
                 $account->received_balance += $booking['extra_fee'];
@@ -797,6 +818,28 @@ if (!function_exists('completeBookingRepeatTransactionForDigitalPayment')) {
                     'trx_type' => TRX_TYPE['received_extra_fee'],
                     'debit' => 0,
                     'credit' => $booking['extra_fee'],
+                    'balance' => $account->received_balance,
+                    'from_user_id' => $admin_user_id,
+                    'to_user_id' => $admin_user_id,
+                    'from_user_account' => ACCOUNT_STATES[1]['value'],
+                    'to_user_account' => null
+                ]);
+            }
+
+            //admin tax transaction (sirf jab tax ka owner 'admin' ho)
+            if($booking['total_tax_amount'] > 0 && providerBookingTaxGoesToAdmin($booking)) {
+                //Admin transactions for tax (+received_balance)
+                $account = Account::where('user_id', $admin_user_id)->first();
+                $account->received_balance += $booking['total_tax_amount'];
+                $account->save();
+
+                Transaction::create([
+                    'ref_trx_id' => $primary_transaction['id'],
+                    'booking_id' => 0,
+                    'booking_repeat_id' => $booking['id'],
+                    'trx_type' => TRX_TYPE['received_tax'],
+                    'debit' => 0,
+                    'credit' => $booking['total_tax_amount'],
                     'balance' => $account->received_balance,
                     'from_user_id' => $admin_user_id,
                     'to_user_id' => $admin_user_id,
@@ -839,7 +882,7 @@ if (!function_exists('completeBookingRepeatTransactionForDigitalPayment')) {
 if (!function_exists('completeBookingTransactionForCashAfterService')) {
     function completeBookingTransactionForCashAfterService($booking): void
     {
-        $service_cost = $booking['total_booking_amount'] - $booking['total_tax_amount'] + $booking['total_discount_amount'] + $booking['total_campaign_discount_amount'] + $booking['total_coupon_discount_amount'] - $booking['extra_fee'];
+        $service_cost = providerBookingServiceCost($booking);
 
         //cost bearing (promotional)
         $booking_details_amounts = BookingDetailsAmount::where('booking_id', $booking->id)->get();
@@ -865,7 +908,7 @@ if (!function_exists('completeBookingTransactionForCashAfterService')) {
         //admin promotional cost will be deducted from admin commission
 
         //total booking amount (without commission)
-        $booking_amount_without_commission = $booking['total_booking_amount'] - $admin_commission - $booking['extra_fee'];
+        $booking_amount_without_commission = providerBookingProviderReceivable($booking, $admin_commission);
 
         //user ids (from/to)
         $admin_user_id = User::where('user_type', ADMIN_USER_TYPES[0])->first()->id;
@@ -911,7 +954,7 @@ if (!function_exists('completeBookingTransactionForCashAfterService')) {
                 ]);
             }
 
-            if($booking['extra_fee'] > 0){
+            if($booking['extra_fee'] > 0 && providerBookingExtraFeeGoesToAdmin($booking)){
                 //Provider transactions (for commission)
                 $account = Account::where('user_id', $provider_user_id)->first();
                 $account->account_payable += $booking['extra_fee'];
@@ -923,6 +966,28 @@ if (!function_exists('completeBookingTransactionForCashAfterService')) {
                     'trx_type' => TRX_TYPE['payable_extra_fee'],
                     'debit' => 0,
                     'credit' => $booking['extra_fee'],
+                    'balance' => $account->account_payable,
+                    'from_user_id' => $provider_user_id,
+                    'to_user_id' => $provider_user_id,
+                    'from_user_account' => ACCOUNT_STATES[2]['value'],
+                    'to_user_account' => null
+                ]);
+
+            }
+
+            //tax: owner 'admin' ho to provider payable me aayega (provider admin ko dega)
+            if($booking['total_tax_amount'] > 0 && providerBookingTaxGoesToAdmin($booking)){
+                //Provider transactions (for tax)
+                $account = Account::where('user_id', $provider_user_id)->first();
+                $account->account_payable += $booking['total_tax_amount'];
+                $account->save();
+
+                Transaction::create([
+                    'ref_trx_id' => $primary_transaction['id'],
+                    'booking_id' => $booking['id'],
+                    'trx_type' => TRX_TYPE['payable_tax'],
+                    'debit' => 0,
+                    'credit' => $booking['total_tax_amount'],
                     'balance' => $account->account_payable,
                     'from_user_id' => $provider_user_id,
                     'to_user_id' => $provider_user_id,
@@ -952,7 +1017,7 @@ if (!function_exists('completeBookingTransactionForCashAfterService')) {
                 ]);
             }
 
-            if($booking['extra_fee']){
+            if($booking['extra_fee'] && providerBookingExtraFeeGoesToAdmin($booking)){
                 //Admin transactions (for commission)
                 $account = Account::where('user_id', $admin_user_id)->first();
                 $account->account_receivable += $booking['extra_fee'];
@@ -964,6 +1029,27 @@ if (!function_exists('completeBookingTransactionForCashAfterService')) {
                     'trx_type' => TRX_TYPE['received_extra_fee'],
                     'debit' => 0,
                     'credit' => $booking['extra_fee'],
+                    'balance' => $account->account_receivable,
+                    'from_user_id' => $provider_user_id,
+                    'to_user_id' => $admin_user_id,
+                    'from_user_account' => ACCOUNT_STATES[3]['value'],
+                    'to_user_account' => null
+                ]);
+            }
+
+            //tax: owner 'admin' ho to admin receivable me aayega (provider se collect)
+            if($booking['total_tax_amount'] > 0 && providerBookingTaxGoesToAdmin($booking)){
+                //Admin transactions (for tax)
+                $account = Account::where('user_id', $admin_user_id)->first();
+                $account->account_receivable += $booking['total_tax_amount'];
+                $account->save();
+
+                Transaction::create([
+                    'ref_trx_id' => $primary_transaction['id'],
+                    'booking_id' => $booking['id'],
+                    'trx_type' => TRX_TYPE['received_tax'],
+                    'debit' => 0,
+                    'credit' => $booking['total_tax_amount'],
                     'balance' => $account->account_receivable,
                     'from_user_id' => $provider_user_id,
                     'to_user_id' => $admin_user_id,
@@ -987,7 +1073,7 @@ if (!function_exists('completeBookingTransactionForCashAfterService')) {
 if (!function_exists('completeBookingRepeatTransactionForCashAfterService')) {
     function completeBookingRepeatTransactionForCashAfterService($booking): void
     {
-        $service_cost = $booking['total_booking_amount'] - $booking['total_tax_amount'] + $booking['total_discount_amount'] + $booking['total_campaign_discount_amount'] + $booking['total_coupon_discount_amount'] - $booking['extra_fee'];
+        $service_cost = providerBookingServiceCost($booking);
 
         //cost bearing (promotional)
         $booking_details_amounts = BookingDetailsAmount::where('booking_repeat_id', $booking->id)->get();
@@ -1013,7 +1099,7 @@ if (!function_exists('completeBookingRepeatTransactionForCashAfterService')) {
         //admin promotional cost will be deducted from admin commission
 
         //total booking amount (without commission)
-        $booking_amount_without_commission = $booking['total_booking_amount'] - $admin_commission - $booking['extra_fee'];
+        $booking_amount_without_commission = providerBookingProviderReceivable($booking, $admin_commission);
 
         //user ids (from/to)
         $admin_user_id = User::where('user_type', ADMIN_USER_TYPES[0])->first()->id;
@@ -1061,7 +1147,7 @@ if (!function_exists('completeBookingRepeatTransactionForCashAfterService')) {
                 ]);
             }
 
-            if($booking['extra_fee'] > 0){
+            if($booking['extra_fee'] > 0 && providerBookingExtraFeeGoesToAdmin($booking)){
                 //Provider transactions (for commission)
                 $account = Account::where('user_id', $provider_user_id)->first();
                 $account->account_payable += $booking['extra_fee'];
@@ -1074,6 +1160,29 @@ if (!function_exists('completeBookingRepeatTransactionForCashAfterService')) {
                     'trx_type' => TRX_TYPE['payable_extra_fee'],
                     'debit' => 0,
                     'credit' => $booking['extra_fee'],
+                    'balance' => $account->account_payable,
+                    'from_user_id' => $provider_user_id,
+                    'to_user_id' => $provider_user_id,
+                    'from_user_account' => ACCOUNT_STATES[2]['value'],
+                    'to_user_account' => null
+                ]);
+
+            }
+
+            //tax: owner 'admin' ho to provider payable me aayega (provider admin ko dega)
+            if($booking['total_tax_amount'] > 0 && providerBookingTaxGoesToAdmin($booking)){
+                //Provider transactions (for tax)
+                $account = Account::where('user_id', $provider_user_id)->first();
+                $account->account_payable += $booking['total_tax_amount'];
+                $account->save();
+
+                Transaction::create([
+                    'ref_trx_id' => $primary_transaction['id'],
+                    'booking_id' => 0,
+                    'booking_repeat_id' => $booking['id'],
+                    'trx_type' => TRX_TYPE['payable_tax'],
+                    'debit' => 0,
+                    'credit' => $booking['total_tax_amount'],
                     'balance' => $account->account_payable,
                     'from_user_id' => $provider_user_id,
                     'to_user_id' => $provider_user_id,
@@ -1104,7 +1213,7 @@ if (!function_exists('completeBookingRepeatTransactionForCashAfterService')) {
                 ]);
             }
 
-            if($booking['extra_fee']){
+            if($booking['extra_fee'] && providerBookingExtraFeeGoesToAdmin($booking)){
                 //Admin transactions (for commission)
                 $account = Account::where('user_id', $admin_user_id)->first();
                 $account->account_receivable += $booking['extra_fee'];
@@ -1117,6 +1226,28 @@ if (!function_exists('completeBookingRepeatTransactionForCashAfterService')) {
                     'trx_type' => TRX_TYPE['received_extra_fee'],
                     'debit' => 0,
                     'credit' => $booking['extra_fee'],
+                    'balance' => $account->account_receivable,
+                    'from_user_id' => $provider_user_id,
+                    'to_user_id' => $admin_user_id,
+                    'from_user_account' => ACCOUNT_STATES[3]['value'],
+                    'to_user_account' => null
+                ]);
+            }
+
+            //tax: owner 'admin' ho to admin receivable me aayega (provider se collect)
+            if($booking['total_tax_amount'] > 0 && providerBookingTaxGoesToAdmin($booking)){
+                //Admin transactions (for tax)
+                $account = Account::where('user_id', $admin_user_id)->first();
+                $account->account_receivable += $booking['total_tax_amount'];
+                $account->save();
+
+                Transaction::create([
+                    'ref_trx_id' => $primary_transaction['id'],
+                    'booking_id' => 0,
+                    'booking_repeat_id' => $booking['id'],
+                    'trx_type' => TRX_TYPE['received_tax'],
+                    'debit' => 0,
+                    'credit' => $booking['total_tax_amount'],
                     'balance' => $account->account_receivable,
                     'from_user_id' => $provider_user_id,
                     'to_user_id' => $admin_user_id,
@@ -1160,7 +1291,7 @@ if (!function_exists('completeBookingTransactionForPartialCas')) {
         $paid_amount = $booking_partial_payment->paid_amount;
         $due_amount = $booking['total_booking_amount'] - $paid_amount;
 
-        $service_cost = $booking['total_booking_amount'] - $booking['total_tax_amount'] + $booking['total_discount_amount'] + $booking['total_campaign_discount_amount'] + $booking['total_coupon_discount_amount'] - $booking['extra_fee'];
+        $service_cost = providerBookingServiceCost($booking);
 
         if($booking['additional_charge'] > 0) {
             $service_cost = $service_cost - $booking['additional_charge'] + $booking['additional_tax_amount'] + $booking['additional_discount_amount'] + $booking['additional_campaign_discount_amount'] -  $booking['total_coupon_discount_amount'];
@@ -1192,7 +1323,7 @@ if (!function_exists('completeBookingTransactionForPartialCas')) {
         }
 
         //total booking amount (without commission)
-        $booking_amount_without_commission = $booking['total_booking_amount'] - $admin_commission - $booking['additional_charge'] - $booking['extra_fee'];
+        $booking_amount_without_commission = providerBookingProviderReceivable($booking, $admin_commission) - $booking['additional_charge'];
 
         //user ids (from/to)
         $admin_user_id = User::where('user_type', ADMIN_USER_TYPES[0])->first()->id;
@@ -1239,7 +1370,7 @@ if (!function_exists('completeBookingTransactionForPartialCas')) {
                 ]);
             }
 
-            if($booking['extra_fee'] > 0) {
+            if($booking['extra_fee'] > 0 && providerBookingExtraFeeGoesToAdmin($booking)) {
                 //Admin transactions for extra fee (+received_balance)
                 $account = Account::where('user_id', $admin_user_id)->first();
                 $account->received_balance += $booking['extra_fee'];
@@ -1251,6 +1382,27 @@ if (!function_exists('completeBookingTransactionForPartialCas')) {
                     'trx_type' => TRX_TYPE['received_extra_fee'],
                     'debit' => 0,
                     'credit' => $booking['extra_fee'],
+                    'balance' => $account->received_balance,
+                    'from_user_id' => $admin_user_id,
+                    'to_user_id' => $admin_user_id,
+                    'from_user_account' => ACCOUNT_STATES[1]['value'],
+                    'to_user_account' => null
+                ]);
+            }
+
+            //admin tax transaction (sirf jab tax ka owner 'admin' ho)
+            if($booking['total_tax_amount'] > 0 && providerBookingTaxGoesToAdmin($booking)) {
+                //Admin transactions for tax (+received_balance)
+                $account = Account::where('user_id', $admin_user_id)->first();
+                $account->received_balance += $booking['total_tax_amount'];
+                $account->save();
+
+                Transaction::create([
+                    'ref_trx_id' => $primary_transaction['id'],
+                    'booking_id' => $booking['id'],
+                    'trx_type' => TRX_TYPE['received_tax'],
+                    'debit' => 0,
+                    'credit' => $booking['total_tax_amount'],
                     'balance' => $account->received_balance,
                     'from_user_id' => $admin_user_id,
                     'to_user_id' => $admin_user_id,
@@ -1368,7 +1520,7 @@ if (!function_exists('completeBookingTransactionForPartialDigital')) {
      */
     function completeBookingTransactionForPartialDigital($booking): void
     {
-        $service_cost = $booking['total_booking_amount'] - $booking['total_tax_amount'] + $booking['total_discount_amount'] + $booking['total_campaign_discount_amount'] + $booking['total_coupon_discount_amount'] - $booking['extra_fee'];
+        $service_cost = providerBookingServiceCost($booking);
         if($booking['additional_charge'] > 0) {
             $service_cost = $service_cost - $booking['additional_charge'] + $booking['additional_tax_amount'] + $booking['additional_discount_amount'] + $booking['additional_campaign_discount_amount'] -  $booking['total_coupon_discount_amount'];
         }
@@ -1400,7 +1552,7 @@ if (!function_exists('completeBookingTransactionForPartialDigital')) {
         //total booking amount (without commission)
         // P3 alignment: baaki sabhi flow ki tarah extra_fee provider credit se
         // subtract (report provider_earning bhi yahi value rakhta hai).
-        $booking_amount_without_commission = $booking['total_booking_amount'] - $admin_commission - $booking['additional_charge'] - $booking['extra_fee'];
+        $booking_amount_without_commission = providerBookingProviderReceivable($booking, $admin_commission) - $booking['additional_charge'];
 
         //user ids (from/to)
         $admin_user_id = User::where('user_type', ADMIN_USER_TYPES[0])->first()->id;
@@ -1426,7 +1578,7 @@ if (!function_exists('completeBookingTransactionForPartialDigital')) {
                 'to_user_account' => null
             ]);
 
-            if($booking['extra_fee'] > 0) {
+            if($booking['extra_fee'] > 0 && providerBookingExtraFeeGoesToAdmin($booking)) {
                 //Admin transactions for extra fee (+received_balance) —
                 //digital/partial-CAS/repeat flows ki tarah booking fee admin ko milti hai.
                 $account = Account::where('user_id', $admin_user_id)->first();
@@ -1439,6 +1591,27 @@ if (!function_exists('completeBookingTransactionForPartialDigital')) {
                     'trx_type' => TRX_TYPE['received_extra_fee'],
                     'debit' => 0,
                     'credit' => $booking['extra_fee'],
+                    'balance' => $account->received_balance,
+                    'from_user_id' => $admin_user_id,
+                    'to_user_id' => $admin_user_id,
+                    'from_user_account' => ACCOUNT_STATES[1]['value'],
+                    'to_user_account' => null
+                ]);
+            }
+
+            //admin tax transaction (sirf jab tax ka owner 'admin' ho)
+            if($booking['total_tax_amount'] > 0 && providerBookingTaxGoesToAdmin($booking)) {
+                //Admin transactions for tax (+received_balance)
+                $account = Account::where('user_id', $admin_user_id)->first();
+                $account->received_balance += $booking['total_tax_amount'];
+                $account->save();
+
+                Transaction::create([
+                    'ref_trx_id' => $primary_transaction['id'],
+                    'booking_id' => $booking['id'],
+                    'trx_type' => TRX_TYPE['received_tax'],
+                    'debit' => 0,
+                    'credit' => $booking['total_tax_amount'],
                     'balance' => $account->received_balance,
                     'from_user_id' => $admin_user_id,
                     'to_user_id' => $admin_user_id,
@@ -1518,7 +1691,7 @@ if (!function_exists('completeBookingTransactionForPartialDigital')) {
 if (!function_exists('completeBookingTransactionForDigitalPaymentAndExtraService')) {
     function completeBookingTransactionForDigitalPaymentAndExtraService($booking): void
     {
-        $service_cost = $booking['total_booking_amount'] - $booking['total_tax_amount'] + $booking['total_discount_amount'] + $booking['total_campaign_discount_amount'] + $booking['total_coupon_discount_amount'];
+        $service_cost = providerBookingServiceCost($booking);
 
         //cost bearing (promotional)
         $booking_details_amounts = BookingDetailsAmount::where('booking_id', $booking->id)->get();
@@ -1544,7 +1717,7 @@ if (!function_exists('completeBookingTransactionForDigitalPaymentAndExtraService
         }
 
         //total booking amount (without commission)
-        $booking_amount_without_commission = $booking['total_booking_amount'] - $admin_commission - $booking['extra_fee'];
+        $booking_amount_without_commission = providerBookingProviderReceivable($booking, $admin_commission);
 
         //user ids (from/to)
         $admin_user_id = User::where('user_type', ADMIN_USER_TYPES[0])->first()->id;
@@ -1616,8 +1789,8 @@ if (!function_exists('completeBookingTransactionForDigitalPaymentAndExtraService
                 ]);
             }
 
-            //admin extra fee transaction
-            if($booking['extra_fee'] > 0) {
+            //admin extra fee transaction (sirf jab extra_fee ka owner 'admin' ho)
+            if($booking['extra_fee'] > 0 && providerBookingExtraFeeGoesToAdmin($booking)) {
                 //Admin transactions for extra fee (+received)
                 $account = Account::where('user_id', $admin_user_id)->first();
                 $account->received_balance += $booking['extra_fee'];
@@ -1629,6 +1802,27 @@ if (!function_exists('completeBookingTransactionForDigitalPaymentAndExtraService
                     'trx_type' => TRX_TYPE['received_extra_fee'],
                     'debit' => 0,
                     'credit' => $booking['extra_fee'],
+                    'balance' => $account->received_balance,
+                    'from_user_id' => $admin_user_id,
+                    'to_user_id' => $admin_user_id,
+                    'from_user_account' => ACCOUNT_STATES[1]['value'],
+                    'to_user_account' => null
+                ]);
+            }
+
+            //admin tax transaction (sirf jab tax ka owner 'admin' ho)
+            if($booking['total_tax_amount'] > 0 && providerBookingTaxGoesToAdmin($booking)) {
+                //Admin transactions for tax (+received)
+                $account = Account::where('user_id', $admin_user_id)->first();
+                $account->received_balance += $booking['total_tax_amount'];
+                $account->save();
+
+                Transaction::create([
+                    'ref_trx_id' => $primary_transaction['id'],
+                    'booking_id' => $booking['id'],
+                    'trx_type' => TRX_TYPE['received_tax'],
+                    'debit' => 0,
+                    'credit' => $booking['total_tax_amount'],
                     'balance' => $account->received_balance,
                     'from_user_id' => $admin_user_id,
                     'to_user_id' => $admin_user_id,
@@ -1736,7 +1930,7 @@ if (!function_exists('completeBookingTransactionForDigitalPaymentAndExtraService
 if (!function_exists('completeBookingRepeatTransactionForDigitalPaymentAndExtraService')) {
     function completeBookingRepeatTransactionForDigitalPaymentAndExtraService($booking): void
     {
-        $service_cost = $booking['total_booking_amount'] - $booking['total_tax_amount'] + $booking['total_discount_amount'] + $booking['total_campaign_discount_amount'] + $booking['total_coupon_discount_amount'];
+        $service_cost = providerBookingServiceCost($booking);
 
         //cost bearing (promotional)
         $booking_details_amounts = BookingDetailsAmount::where('booking_repeat_id', $booking->id)->get();
@@ -1762,7 +1956,7 @@ if (!function_exists('completeBookingRepeatTransactionForDigitalPaymentAndExtraS
         }
 
         //total booking amount (without commission)
-        $booking_amount_without_commission = $booking['total_booking_amount'] - $admin_commission - $booking['extra_fee'];
+        $booking_amount_without_commission = providerBookingProviderReceivable($booking, $admin_commission);
 
         //user ids (from/to)
         $admin_user_id = User::where('user_type', ADMIN_USER_TYPES[0])->first()->id;
@@ -1837,8 +2031,8 @@ if (!function_exists('completeBookingRepeatTransactionForDigitalPaymentAndExtraS
                 ]);
             }
 
-            //admin extra fee transaction
-            if($booking['extra_fee'] > 0) {
+            //admin extra fee transaction (sirf jab extra_fee ka owner 'admin' ho)
+            if($booking['extra_fee'] > 0 && providerBookingExtraFeeGoesToAdmin($booking)) {
                 //Admin transactions for extra fee (+received)
                 $account = Account::where('user_id', $admin_user_id)->first();
                 $account->received_balance += $booking['extra_fee'];
@@ -1851,6 +2045,28 @@ if (!function_exists('completeBookingRepeatTransactionForDigitalPaymentAndExtraS
                     'trx_type' => TRX_TYPE['received_extra_fee'],
                     'debit' => 0,
                     'credit' => $booking['extra_fee'],
+                    'balance' => $account->received_balance,
+                    'from_user_id' => $admin_user_id,
+                    'to_user_id' => $admin_user_id,
+                    'from_user_account' => ACCOUNT_STATES[1]['value'],
+                    'to_user_account' => null
+                ]);
+            }
+
+            //admin tax transaction (sirf jab tax ka owner 'admin' ho)
+            if($booking['total_tax_amount'] > 0 && providerBookingTaxGoesToAdmin($booking)) {
+                //Admin transactions for tax (+received)
+                $account = Account::where('user_id', $admin_user_id)->first();
+                $account->received_balance += $booking['total_tax_amount'];
+                $account->save();
+
+                Transaction::create([
+                    'ref_trx_id' => $primary_transaction['id'],
+                    'booking_id' => 0,
+                    'booking_repeat_id' => $booking['id'],
+                    'trx_type' => TRX_TYPE['received_tax'],
+                    'debit' => 0,
+                    'credit' => $booking['total_tax_amount'],
                     'balance' => $account->received_balance,
                     'from_user_id' => $admin_user_id,
                     'to_user_id' => $admin_user_id,
