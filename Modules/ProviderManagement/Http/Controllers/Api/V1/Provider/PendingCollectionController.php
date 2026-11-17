@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Schema;
 use Modules\ProviderManagement\Entities\ServicemanCashCollection;
 use Modules\ProviderManagement\Lib\PendingCollectionService;
 use Modules\UserManagement\Entities\Serviceman;
@@ -151,20 +152,27 @@ class PendingCollectionController extends Controller
             )
             ->first();
 
-        // Reviews
-        $reviewStats = DB::table('reviews')
-            ->where('provider_id', $provider->id)
-            ->where('serviceman_id', $serviceman->id)
-            ->select(DB::raw('COUNT(*) as total'), DB::raw('AVG(review_rating) as average'))
-            ->first();
+        // Reviews are optional for the collection detail. Older installs may not
+        // have completed the serviceman_id migration yet, so do not let that
+        // optional section break the whole balance page.
+        $reviewStats = (object) ['total' => 0, 'average' => 0];
+        $recentReviews = collect();
 
-        $recentReviews = DB::table('reviews')
-            ->where('provider_id', $provider->id)
-            ->where('serviceman_id', $serviceman->id)
-            ->orderByDesc('created_at')
-            ->limit(10)
-            ->select('id', 'review_rating', 'review_comment', 'created_at')
-            ->get();
+        if (Schema::hasColumn('reviews', 'serviceman_id')) {
+            $reviewStats = DB::table('reviews')
+                ->where('provider_id', $provider->id)
+                ->where('serviceman_id', $serviceman->id)
+                ->select(DB::raw('COUNT(*) as total'), DB::raw('AVG(review_rating) as average'))
+                ->first() ?? $reviewStats;
+
+            $recentReviews = DB::table('reviews')
+                ->where('provider_id', $provider->id)
+                ->where('serviceman_id', $serviceman->id)
+                ->orderByDesc('created_at')
+                ->limit(10)
+                ->select('id', 'review_rating', 'review_comment', 'created_at')
+                ->get();
+        }
 
         // Booking history paginated
         $limit = (int) ($request['history_limit'] ?? 20);

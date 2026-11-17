@@ -173,9 +173,7 @@ h1, h2,h3,h4, h5, h6 {
                     <td class="company-details">
                         <a target="_blank" href="#">
                             @php($logo = getBusinessSettingsImageFullPath(key: 'business_logo', settingType: 'business_information', path: 'business/', defaultPath: 'public/assets/placeholder.png'))
-                            <img width="84" height="17"
-                                 src="{{$logo}}" alt="{{ translate('logo') }}"
-                                 data-holder-rendered="true"/>
+                            <img src="{{$logo}}" style="max-width:140px; max-height:56px; width:auto; height:auto; object-fit:contain;" alt="{{ translate('logo') }}" />
                         </a>
                         @php($business_email = business_config('business_email','business_information'))
                         @php($business_phone = business_config('business_phone','business_information'))
@@ -271,6 +269,27 @@ h1, h2,h3,h4, h5, h6 {
                             </td>
                         </tr>
                     </table>
+<div class="row contacts mt-3">
+    <div class="col border rounded p-3">
+        <div class="fs-9">{{ translate('Provider') }}</div>
+        <div class="fw-700">{{ $booking->provider?->company_name ?? translate('not_available') }}</div>
+        @if(!empty($booking->provider?->company_phone ?? $booking->provider?->contact_person_phone))
+            <div class="fs-9">{{ $booking->provider->company_phone ?? $booking->provider->contact_person_phone }}</div>
+        @endif
+    </div>
+    <div class="col border rounded p-3">
+        <div class="fs-9">{{ translate('Service Man') }}</div>
+        @php($invoiceServicemanUser = $booking->serviceman?->user)
+        @if($invoiceServicemanUser)
+            <div class="fw-700">{{ trim(($invoiceServicemanUser->first_name ?? '') . ' ' . ($invoiceServicemanUser->last_name ?? '')) }}</div>
+            @if(!empty($invoiceServicemanUser->phone))
+                <div class="fs-9">{{ $invoiceServicemanUser->phone }}</div>
+            @endif
+        @else
+            <div>{{ translate('not_available') }}</div>
+        @endif
+    </div>
+</div>
 
                     <table cellspacing="0" cellpadding="0">
                         <thead>
@@ -329,8 +348,15 @@ h1, h2,h3,h4, h5, h6 {
                             <td class="">{{translate('Vat_/_Tax')}} (%)</td>
                             <td>+ {{with_currency_symbol($booking->total_tax_amount)}}</td>
                         </tr>
-                        @if ($booking->extra_fee > 0)
-                            @php($additional_charge_label_name = business_config('additional_charge_label_name', 'booking_setup')->live_values??'Fee')
+                        @if (($booking->platform_fee ?? 0) > 0)
+                            @php($platformFeeLabel = $booking->platform_fee_label ?? $booking->provider?->platform_fee_label ?? translate('Platform Fee'))
+                            <tr>
+                                <td colspan="2"></td>
+                                <td colspan="2" class="text-uppercase">{{ $platformFeeLabel }}</td>
+                                <td>+ {{ with_currency_symbol($booking->platform_fee) }}</td>
+                            </tr>
+                        @endif                        @if ($booking->extra_fee > 0)
+                            @php($additional_charge_label_name = $booking->extra_fee_label ?: (business_config('additional_charge_label_name', 'booking_setup')->live_values ?? 'Fee'))
                             <tr>
                                 <td colspan="2"></td>
                                 <td colspan="2" class="text-uppercase">{{$additional_charge_label_name}}</td>
