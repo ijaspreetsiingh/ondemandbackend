@@ -313,14 +313,14 @@
                     </table>
 <div class="row contacts mt-3">
     <div class="col border rounded p-3">
-        <div class="fs-9">{{ translate('Provider') }}</div>
+        <div class="fs-9">Zone Service Admin</div>
         <div class="fw-700">{{ $booking->provider?->company_name ?? translate('not_available') }}</div>
         @if(!empty($booking->provider?->company_phone ?? $booking->provider?->contact_person_phone))
             <div class="fs-9">{{ $booking->provider->company_phone ?? $booking->provider->contact_person_phone }}</div>
         @endif
     </div>
     <div class="col border rounded p-3">
-        <div class="fs-9">{{ translate('Service Man') }}</div>
+        <div class="fs-9">Partner</div>
         @php
             $invoiceServicemen = collect();
             if ($booking->serviceman?->user) {
