@@ -186,6 +186,7 @@ class BusinessInformationController extends Controller
 
         $config = 0;
         $webPage = $request->has('web_page') ? $request['web_page'] : 'business_setup';
+        $backupEnabled = true;
         $businessLogoFullPath = '';
         $businessFaviconFullPath = '';
         $providerCount = $this->provider->count();
@@ -214,9 +215,38 @@ class BusinessInformationController extends Controller
             $dataValues = $this->businessSetting->whereIn('settings_type', ['booking_setup', 'bidding_system', 'business_information'])->get();
         }elseif ($webPage == 'business_plan') {
             $dataValues = $this->businessSetting->whereIn('settings_type', ['business_information', 'provider_config'])->get();
+        } elseif ($webPage == 'backup') {
+            $dataValues = collect();
+            $backupSetting = $this->businessSetting
+                ->where('key_name', 'backup_enabled')
+                ->where('settings_type', 'backup_settings')
+                ->first();
+            $backupEnabled = (int) ($backupSetting?->live_values ?? 1) === 1;
         }
 
-        return view('businesssettingsmodule::admin.business', compact('dataValues', 'webPage', 'businessLogoFullPath', 'businessFaviconFullPath','config', 'providerCount', 'addressLat', 'addressLong'));
+        return view('businesssettingsmodule::admin.business', compact('dataValues', 'webPage', 'businessLogoFullPath', 'businessFaviconFullPath','config', 'providerCount', 'addressLat', 'addressLong', 'backupEnabled'));
+    }
+
+    public function updateBackupSettings(Request $request): RedirectResponse
+    {
+        $this->authorize('business_update');
+        $validated = $request->validate([
+            'backup_enabled' => 'required|in:0,1',
+        ]);
+        $enabled = (int) $validated['backup_enabled'];
+
+        $this->businessSetting->updateOrCreate(
+            ['key_name' => 'backup_enabled', 'settings_type' => 'backup_settings'],
+            [
+                'live_values' => $enabled,
+                'test_values' => $enabled,
+                'mode' => 'live',
+                'is_active' => 1,
+            ]
+        );
+
+        Toastr::success(translate(DEFAULT_UPDATE_200['message']));
+        return redirect()->route('admin.business-settings.get-business-information', ['web_page' => 'backup']);
     }
 
     /**

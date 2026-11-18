@@ -72,6 +72,12 @@
                                     {{translate('Business_Plan')}}
                                 </a>
                             </li>
+                            <li class="nav-item">
+                                <a href="{{url()->current()}}?web_page=backup"
+                                   class="nav-link {{$webPage=='backup'?'active':''}}">
+                                    {{translate('Backups')}}
+                                </a>
+                            </li>
                         </ul>
                         <div class="nav--tab__prev position-absolute top-0 start-3">
                             <button class="border-0 w-38 h-38 d-flex align-items-center justify-content-center rounded-full p-0 bg-white text-primary">
@@ -88,6 +94,51 @@
                             </button>
                         </div>
                     </div>
+
+                    @if($webPage=='backup')
+                        <div class="card mb-3">
+                            <div class="card-body">
+                                <h4 class="mb-2">{{translate('Daily Backup')}}</h4>
+                                <p class="text-muted mb-4">
+                                    {{translate('Controls the automatic application backup scheduled every day at 2:30 AM. Manual backups remain available from the Backup Database page.')}}
+                                </p>
+                                <div class="border p-20 rounded bg-white">
+                                    @can('business_update')
+                                        <form method="POST" action="{{route('admin.business-settings.backup-settings.update')}}">
+                                            @csrf
+                                            @method('PUT')
+                                            <input type="hidden" name="backup_enabled" value="0">
+                                            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                                                <div>
+                                                    <h5 class="mb-1">{{translate('Daily Backup Enable/Disable')}}</h5>
+                                                    <p class="fz-12 text-muted mb-0">
+                                                        {{ $backupEnabled ? translate('Daily automatic backups are enabled.') : translate('Daily automatic backups are disabled.') }}
+                                                    </p>
+                                                </div>
+                                                <label class="switcher">
+                                                    <input class="switcher_input" type="checkbox" name="backup_enabled" value="1" @checked($backupEnabled)>
+                                                    <span class="switcher_control"></span>
+                                                </label>
+                                            </div>
+                                            <div class="d-flex justify-content-end mt-3">
+                                                <button type="submit" class="btn btn--primary">{{translate('Save')}}</button>
+                                            </div>
+                                        </form>
+                                    @else
+                                        <div class="d-flex align-items-center justify-content-between gap-3">
+                                            <span class="text-dark fz-14">{{translate('Daily Backup Enable/Disable')}}</span>
+                                            <span class="badge {{ $backupEnabled ? 'badge-success' : 'badge-secondary' }}">
+                                                {{ $backupEnabled ? translate('Enabled') : translate('Disabled') }}
+                                            </span>
+                                        </div>
+                                    @endcan
+                                </div>
+                                <p class="fz-12 text-muted mt-3 mb-0">
+                                    {{translate('Disabling scheduled backups does not delete existing backup files. Existing files are removed by the configured backup retention cleanup.')}}
+                                </p>
+                            </div>
+                        </div>
+                    @endif
 
                     <!-- Business Info--->
                     @if($webPage=='business_setup')

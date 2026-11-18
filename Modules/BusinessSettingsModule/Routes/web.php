@@ -34,6 +34,7 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'namespace' => 'Web\Admin',
 
         Route::get('get-business-information', [BusinessInformationController::class, 'businessInformationGet'])->name('get-business-information');
         Route::put('set-business-information', [BusinessInformationController::class, 'businessInformationSet'])->name('set-business-information');
+        Route::put('backup-settings', [BusinessInformationController::class, 'updateBackupSettings'])->name('backup-settings.update');
 
         Route::put('set-bidding-system', [BusinessInformationController::class, 'setBiddingSystem'])->name('set-bidding-system');
         Route::put('update-action-status', [BusinessInformationController::class, 'updateActionStatus'])->name('update-action-status');

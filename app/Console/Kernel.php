@@ -17,7 +17,7 @@ class Kernel extends ConsoleKernel
     {
         // W2.15: daily DB+app backup (spatie/laravel-backup) + retention prune.
         // Offsite push ke liye config/backup.php me s3 disk + .env me AWS_* bharo.
-        $schedule->command('backup:run --disable-notifications')->dailyAt('02:30')->withoutOverlapping();
+        $schedule->command('backup:run --disable-notifications')->dailyAt('02:30')->withoutOverlapping()->when(static fn (): bool => (int) (business_config('backup_enabled', 'backup_settings')?->live_values ?? 1) === 1);
         $schedule->command('backup:clean --disable-notifications')->dailyAt('03:30')->withoutOverlapping();
 
         // W4.24: failed queue jobs 48h baad prune; redis reserved jobs bhi

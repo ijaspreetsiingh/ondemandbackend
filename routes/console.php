@@ -34,7 +34,7 @@ Schedule::command('email:send-renewal-reminder')->dailyAt('01:00')->withoutOverl
 
 // W2.15/W4.24: Laravel 12 me app/Console/Kernel.php schedule() call hi nahi hota —
 // isliye backup + queue prune yahin routes/console.php se schedule ho rahe hain
-Schedule::command('backup:run --disable-notifications')->dailyAt('02:30')->withoutOverlapping();
+Schedule::command('backup:run --disable-notifications')->dailyAt('02:30')->withoutOverlapping()->when(static fn (): bool => (int) (business_config('backup_enabled', 'backup_settings')?->live_values ?? 1) === 1);
 Schedule::command('backup:clean --disable-notifications')->dailyAt('03:30')->withoutOverlapping();
 Schedule::command('queue:prune-failed --hours=48')->dailyAt('04:00');
 Schedule::command('queue:prune --hours=48')->dailyAt('04:15');
