@@ -445,6 +445,7 @@ class PendingCollectionController extends Controller
             ->limit($limit)
             ->select(
                 'b.id',
+                'b.is_repeated',
                 'b.readable_id',
                 'b.booking_status',
                 'b.payment_method',
