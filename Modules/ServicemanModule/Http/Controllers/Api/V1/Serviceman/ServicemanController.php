@@ -18,6 +18,7 @@ use Modules\PromotionManagement\Entities\PushNotification;
 use Modules\SMSModule\Lib\SMS_gateway;
 use Modules\UserManagement\Entities\Serviceman;
 use Modules\UserManagement\Entities\User;
+use Modules\ProviderManagement\Lib\PendingCollectionService;
 use Modules\PaymentModule\Traits\SmsGateway;
 
 class ServicemanController extends Controller
@@ -120,6 +121,28 @@ class ServicemanController extends Controller
                     ->selectRaw('SUM(total) as total, year, month' . ($period === 'full_month' ? ', day' : ''))
                     ->groupByRaw($groupColumns)
                     ->get()->toArray();
+
+                // Cash bookings can assign extra charge or tax directly to the
+                // serviceman. Add those configured shares to the stored base
+                // commission so the chart matches the collection ledger.
+                $providerId = $request->user()->serviceman->provider_id;
+                $from = $period === 'full_month'
+                    ? sprintf('%04d-%02d-01', (int) $request['year'], (int) $request['month'])
+                    : sprintf('%04d-01-01', (int) $request['year']);
+                $to = $period === 'full_month'
+                    ? date('Y-m-t', strtotime($from))
+                    : sprintf('%04d-12-31', (int) $request['year']);
+                $adjustments = $this->servicemanCashEarningAdjustmentsByPeriod(
+                    $providerId,
+                    $servicemanId,
+                    $from,
+                    $to,
+                    $period === 'full_month'
+                );
+                foreach ($allBookings as $row) {
+                    $periodKey = $period === 'full_month' ? (int) $row->day : (int) $row->month;
+                    $row->total = round((float) $row->total + (float) ($adjustments[$periodKey] ?? 0), 2);
+                }
             } else {
                 $allBookings = [];
             }
@@ -176,7 +199,8 @@ class ServicemanController extends Controller
         $lastYearEnd   = $endOfYear->copy()->subYear();
 
         // Sum actual serviceman share from completed bookings (including repeats).
-        $sumEarnings = function ($start, $end) use ($servicemanId) {
+        $providerId = $request->user()->serviceman->provider_id;
+        $sumEarnings = function ($start, $end) use ($servicemanId, $providerId) {
             $bookingEarnings = DB::table('booking_details_amounts as amounts')
                 ->join('bookings as booking', 'amounts.booking_id', '=', 'booking.id')
                 ->whereNull('amounts.booking_repeat_id')
@@ -192,7 +216,14 @@ class ServicemanController extends Controller
                 ->whereBetween('booking_repeat.created_at', [$start, $end])
                 ->sum('amounts.serviceman_earning');
 
-            return (float) $bookingEarnings + (float) $repeatEarnings;
+            $cashAdjustment = $this->servicemanCashEarningAdjustmentBetween(
+                $providerId,
+                $servicemanId,
+                $start->toDateString(),
+                $end->toDateString()
+            );
+
+            return (float) $bookingEarnings + (float) $repeatEarnings + $cashAdjustment;
         };
 
         $allTimeEarning = $sumEarnings(Carbon::create(2000, 1, 1), $now->copy()->endOfDay());
@@ -267,6 +298,7 @@ class ServicemanController extends Controller
 
         $totalEarning = 0.0;
         $totalBookings = 0;
+        $providerId = $request->user()->serviceman->provider_id;
 
         // Regular bookings
         $regularEarnings = DB::table('booking_details_amounts as amounts')
@@ -295,6 +327,13 @@ class ServicemanController extends Controller
             $totalBookings++;
         }
 
+        $totalEarning += $this->servicemanCashEarningAdjustmentBetween(
+            $providerId,
+            $servicemanId,
+            $request->from_date,
+            $request->to_date
+        );
+
         $data = [
             'from_date' => $request->from_date,
             'to_date' => $request->to_date,
@@ -303,6 +342,55 @@ class ServicemanController extends Controller
         ];
 
         return response()->json(response_formatter(DEFAULT_200, $data), 200);
+    }
+
+    /**
+     * Extra/tax amounts assigned to the serviceman are stored separately from
+     * the base commission snapshot. Reuse the collection ledger calculation so
+     * dashboard totals and the cash collection screens agree.
+     */
+    private function servicemanCashEarningAdjustmentBetween(
+        string $providerId,
+        string $servicemanId,
+        string $from,
+        string $to
+    ): float {
+        $provider = DB::table('providers')->where('id', $providerId)->first();
+        if (!$provider) {
+            return 0.0;
+        }
+
+        return PendingCollectionService::cashBookingRows($providerId, $servicemanId, $from, $to)
+            ->sum(function ($row) use ($provider) {
+                $adjusted = PendingCollectionService::bookingDueShare($provider, $row)['serviceman_earning'];
+                return round($adjusted - (float) $row->serviceman_earning, 2);
+            });
+    }
+
+    /**
+     * @return array<int, float> day-of-month or month-number => earnings adjustment
+     */
+    private function servicemanCashEarningAdjustmentsByPeriod(
+        string $providerId,
+        string $servicemanId,
+        string $from,
+        string $to,
+        bool $groupByDay
+    ): array {
+        $provider = DB::table('providers')->where('id', $providerId)->first();
+        if (!$provider) {
+            return [];
+        }
+
+        $adjustments = [];
+        foreach (PendingCollectionService::cashBookingRows($providerId, $servicemanId, $from, $to) as $row) {
+            $date = substr((string) $row->created_at, 0, 10);
+            $key = $groupByDay ? (int) substr($date, 8, 2) : (int) substr($date, 5, 2);
+            $adjusted = PendingCollectionService::bookingDueShare($provider, $row)['serviceman_earning'];
+            $adjustments[$key] = round(($adjustments[$key] ?? 0) + $adjusted - (float) $row->serviceman_earning, 2);
+        }
+
+        return $adjustments;
     }
 
     public function changePassword(Request $request): JsonResponse

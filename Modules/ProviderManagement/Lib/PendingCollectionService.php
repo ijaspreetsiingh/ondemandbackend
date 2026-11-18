@@ -193,6 +193,68 @@ class PendingCollectionService
     }
 
     /**
+     * Allocate each cash receipt to the serviceman's oldest completed cash
+     * booking first. Provider app booking history uses this to show exactly
+     * which receipt reduced each booking balance.
+     *
+     * @return array<string, array<int, array{id: string, amount: float, note: ?string, created_at: string}>>
+     */
+    public static function servicemanPaymentAllocations(string $providerId, string $servicemanId): array
+    {
+        $provider = DB::table('providers')->where('id', $providerId)->first();
+        if (!$provider) {
+            return [];
+        }
+
+        $bookingRows = self::cashBookingRows($providerId, $servicemanId)->values();
+        if ($bookingRows->isEmpty()) {
+            return [];
+        }
+
+        $remainingByBooking = [];
+        foreach ($bookingRows as $row) {
+            $remainingByBooking[] = self::bookingDueShare($provider, $row)['due'];
+        }
+
+        $receipts = DB::table('serviceman_cash_collections')
+            ->where('provider_id', $providerId)
+            ->where('serviceman_id', $servicemanId)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get(['id', 'amount', 'note', 'created_at']);
+
+        $allocations = [];
+        $bookingIndex = 0;
+        foreach ($receipts as $receipt) {
+            $left = round((float) $receipt->amount, 2);
+
+            while ($left > 0.009 && $bookingIndex < $bookingRows->count()) {
+                if ($remainingByBooking[$bookingIndex] <= 0.009) {
+                    $bookingIndex++;
+                    continue;
+                }
+
+                $amount = round(min($left, $remainingByBooking[$bookingIndex]), 2);
+                $bookingId = (string) $bookingRows[$bookingIndex]->booking_id;
+                $allocations[$bookingId][] = [
+                    'id' => (string) $receipt->id,
+                    'amount' => $amount,
+                    'note' => $receipt->note,
+                    'created_at' => (string) $receipt->created_at,
+                ];
+
+                $left = round($left - $amount, 2);
+                $remainingByBooking[$bookingIndex] = round($remainingByBooking[$bookingIndex] - $amount, 2);
+                if ($remainingByBooking[$bookingIndex] <= 0.009) {
+                    $bookingIndex++;
+                }
+            }
+        }
+
+        return $allocations;
+    }
+
+    /**
      * Provider ke saare servicemen ki booking counts (cash + online dono).
      *
      * @return Collection  serviceman_id => object {total, completed, canceled, ongoing}

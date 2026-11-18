@@ -81,6 +81,7 @@ Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1
     // PENDING COLLECTION (cash after service -> serviceman commission recovery)
     Route::group(['prefix' => 'pending-collection', 'as' => 'pending_collection.'], function () {
         Route::get('summary', [PendingCollectionController::class, 'summary'])->name('summary');
+        Route::get('provider-payable', [PendingCollectionController::class, 'providerPayableDetail'])->name('provider.payable');
         Route::get('/', [PendingCollectionController::class, 'index'])->name('index');
         Route::get('technician/{id}', [PendingCollectionController::class, 'servicemanDetail'])->name('serviceman.detail');
         Route::post('collect', [PendingCollectionController::class, 'collect'])->name('collect');

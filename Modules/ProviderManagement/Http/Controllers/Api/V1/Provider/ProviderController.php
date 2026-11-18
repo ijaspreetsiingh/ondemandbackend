@@ -299,6 +299,17 @@ class ProviderController extends Controller
         $providerId = $provider->id;
         $now = Carbon::now();
 
+        $selectedYear = $request->query('year');
+        $selectedMonth = $request->query('month');
+        if (($selectedYear !== null || $selectedMonth !== null)
+            && (!is_numeric($selectedYear) || (int) $selectedYear < 2000 || (int) $selectedYear > ((int) date('Y') + 1)
+                || !is_numeric($selectedMonth) || (int) $selectedMonth < 1 || (int) $selectedMonth > 12)) {
+            return response()->json(response_formatter(DEFAULT_400, null, [[
+                'error_code' => 'month',
+                'message' => 'A valid year and month are required together.',
+            ]]), 400);
+        }
+
         // Week starts on Monday
         $startOfWeek = $now->copy()->startOfWeek(Carbon::MONDAY);
         $endOfWeek   = $now->copy()->endOfWeek(Carbon::SUNDAY);
@@ -389,6 +400,51 @@ class ProviderController extends Controller
                 'independent_mode' => (int) ($provider->independent_mode ?? 0),
             ],
         ];
+
+        if ($selectedYear !== null && $selectedMonth !== null) {
+            $selectedYear = (int) $selectedYear;
+            $selectedMonth = (int) $selectedMonth;
+            $regularChart = DB::table('booking_details_amounts as amounts')
+                ->join('bookings as booking', 'amounts.booking_id', '=', 'booking.id')
+                ->whereNull('amounts.booking_repeat_id')
+                ->where('booking.provider_id', $providerId)
+                ->where('booking.booking_status', 'completed')
+                ->whereYear('booking.created_at', $selectedYear)
+                ->whereMonth('booking.created_at', $selectedMonth)
+                ->selectRaw('SUM(CASE WHEN amounts.provider_commission > 0 THEN amounts.provider_commission ELSE amounts.provider_earning END) as total, DAY(booking.created_at) as day')
+                ->groupByRaw('DAY(booking.created_at)');
+
+            $repeatChart = DB::table('booking_details_amounts as amounts')
+                ->join('booking_repeats as booking_repeat', 'amounts.booking_repeat_id', '=', 'booking_repeat.id')
+                ->where('booking_repeat.provider_id', $providerId)
+                ->where('booking_repeat.booking_status', 'completed')
+                ->whereYear('booking_repeat.created_at', $selectedYear)
+                ->whereMonth('booking_repeat.created_at', $selectedMonth)
+                ->selectRaw('SUM(CASE WHEN amounts.provider_commission > 0 THEN amounts.provider_commission ELSE amounts.provider_earning END) as total, DAY(booking_repeat.created_at) as day')
+                ->groupByRaw('DAY(booking_repeat.created_at)');
+
+            $dailyRows = DB::query()->fromSub($regularChart->unionAll($repeatChart), 'earning_rows')
+                ->selectRaw('SUM(total) as total, day')
+                ->groupBy('day')
+                ->get()
+                ->keyBy('day');
+
+            $daysInMonth = Carbon::create($selectedYear, $selectedMonth, 1)->daysInMonth;
+            $monthlyChart = [];
+            for ($day = 1; $day <= $daysInMonth; $day++) {
+                $monthlyChart[] = [
+                    'day' => $day,
+                    'total' => round((float) ($dailyRows[$day]->total ?? 0), 2),
+                ];
+            }
+
+            $data['selected_month'] = [
+                'year' => $selectedYear,
+                'month' => $selectedMonth,
+                'total' => round(array_sum(array_column($monthlyChart, 'total')), 2),
+                'daily' => $monthlyChart,
+            ];
+        }
 
         return response()->json(response_formatter(DEFAULT_200, $data), 200);
     }

@@ -72,6 +72,103 @@ class PendingCollectionController extends Controller
     }
 
     /**
+     * Provider app: explain the Admin payable balance booking by booking and
+     * show Admin collections allocated FIFO against the oldest payable entries.
+     */
+    public function providerPayableDetail(Request $request): JsonResponse
+    {
+        $provider = $request->user()->provider;
+        $userId = $request->user()->id;
+
+        $transactions = DB::table('transactions as t')
+            ->leftJoin('bookings as b', 'b.id', '=', 't.booking_id')
+            ->leftJoin('categories as sc', 'sc.id', '=', 'b.sub_category_id')
+            ->leftJoin('categories as mc', 'mc.id', '=', 'b.category_id')
+            ->where('t.from_user_id', $userId)
+            ->whereIn('t.trx_type', ['payable_commission', 'payable_extra_fee', 'payable_tax'])
+            ->where('t.credit', '>', 0)
+            ->orderBy('t.created_at')
+            ->orderBy('t.id')
+            ->get([
+                't.id', 't.booking_id', 't.trx_type', 't.credit', 't.created_at',
+                'b.readable_id', 'b.created_at as booking_created_at',
+                'sc.name as sub_category_name', 'mc.name as category_name',
+            ]);
+
+        $entries = $transactions->groupBy(fn($row) => (string) ($row->booking_id ?: 'unlinked-' . $row->id))
+            ->map(function ($rows) {
+                $first = $rows->first();
+                $charges = ['payable_commission' => 0.0, 'payable_extra_fee' => 0.0, 'payable_tax' => 0.0];
+                foreach ($rows as $row) {
+                    $charges[$row->trx_type] = round($charges[$row->trx_type] + (float) $row->credit, 2);
+                }
+                return (object) [
+                    'booking_id' => $first->booking_id,
+                    'readable_id' => $first->readable_id,
+                    'service_name' => $first->sub_category_name ?: ($first->category_name ?: '—'),
+                    'booking_created_at' => $first->booking_created_at ?: $first->created_at,
+                    'admin_commission' => $charges['payable_commission'],
+                    'extra_fee' => $charges['payable_extra_fee'],
+                    'tax' => $charges['payable_tax'],
+                    'due_amount' => round(array_sum($charges), 2),
+                    'paid_amount' => 0.0,
+                    'payment_history' => [],
+                ];
+            })->values();
+
+        $remaining = $entries->map(fn($entry) => (float) $entry->due_amount)->all();
+        $receipts = DB::table('transactions')
+            ->where('from_user_id', $userId)
+            ->where('trx_type', 'paid_commission')
+            ->where('debit', '>', 0)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get(['id', 'debit', 'created_at']);
+
+        $entryIndex = 0;
+        foreach ($receipts as $receipt) {
+            $left = round((float) $receipt->debit, 2);
+            while ($left > 0.009 && $entryIndex < $entries->count()) {
+                if ($remaining[$entryIndex] <= 0.009) {
+                    $entryIndex++;
+                    continue;
+                }
+                $amount = round(min($left, $remaining[$entryIndex]), 2);
+                $entry = $entries[$entryIndex];
+                $entry->paid_amount = round($entry->paid_amount + $amount, 2);
+                $entry->payment_history[] = [
+                    'id' => (string) $receipt->id,
+                    'amount' => $amount,
+                    'created_at' => (string) $receipt->created_at,
+                ];
+                $left = round($left - $amount, 2);
+                $remaining[$entryIndex] = round($remaining[$entryIndex] - $amount, 2);
+                if ($remaining[$entryIndex] <= 0.009) {
+                    $entryIndex++;
+                }
+            }
+        }
+
+        foreach ($entries as $index => $entry) {
+            $entry->pending_amount = round(max($remaining[$index] ?? 0, 0), 2);
+        }
+
+        $totalAccrued = round($transactions->sum('credit'), 2);
+        $totalCollected = round($receipts->sum('debit'), 2);
+        $accountPayable = round((float) ($provider->owner?->account?->account_payable ?? 0), 2);
+
+        return response()->json(response_formatter(DEFAULT_200, [
+            'provider_payable' => $accountPayable,
+            'total_accrued' => $totalAccrued,
+            'total_collected' => $totalCollected,
+            'ledger_adjustment' => round($accountPayable - ($totalAccrued - $totalCollected), 2),
+            'bookings' => $entries->sortByDesc('booking_created_at')->values(),
+            'payment_history' => $receipts->sortByDesc('created_at')->values(),
+            'currency_symbol' => currency_symbol(),
+        ]), 200);
+    }
+
+    /**
      * Serviceman-wise pending list (date range + search + pagination).
      */
     public function index(Request $request): JsonResponse
