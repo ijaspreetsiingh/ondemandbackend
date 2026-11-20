@@ -13,6 +13,7 @@ use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\ProviderControll
 use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\ServiceController;
 use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\AccountController;
 use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\PendingCollectionController;
+use Modules\BookingModule\Http\Controllers\Api\V1\Provider\FaceVerificationController as BookingFaceVerificationController;
 use Modules\ProviderManagement\Http\Controllers\Api\V1\Provider\WithdrawController;
 use Modules\ProviderManagement\Http\Controllers\Api\V1\Admin\ProviderController as AdminProviderController;
 
@@ -24,7 +25,6 @@ Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1
     Route::put('secret-restore', [ProviderProviderController::class, 'resetPassword']);
     Route::post('locale-switch', [ProviderProviderController::class, 'changeLanguage']);
 });
-
 Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1\Provider', 'middleware' => ['auth:api', 'actch:provider_app']], function () {
     Route::get('/', [ProviderProviderController::class, 'index']);
     Route::get('overview', [ProviderProviderController::class, 'dashboard']);
@@ -38,6 +38,8 @@ Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1
     Route::get('dossier', [ProviderProviderController::class, 'index']);
     Route::get('reconcile', [ProviderProviderController::class, 'adjust']);
     Route::get('alert-feed', [ProviderProviderController::class, 'notifications']);
+    Route::get('face-verification/{booking_id}', [BookingFaceVerificationController::class, 'review']);
+    Route::post('face-verification/{booking_id}/approve', [BookingFaceVerificationController::class, 'approve']);
     Route::put('modify/push-key', [ProviderProviderController::class, 'updateFcmToken']);
     Route::put('modify/account', [ProviderProviderController::class, 'updateProfile']);
     Route::put('modify/secret', [ProviderProviderController::class, 'updatePassword']);
@@ -151,3 +153,4 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'namespace' => 'Api\V1\Admi
         Route::put('update-subscription/sub-categories/{provider_id}', [AdminProviderController::class, 'updateSubscription']);
     });
 });
+

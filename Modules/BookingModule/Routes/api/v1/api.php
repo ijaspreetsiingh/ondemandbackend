@@ -8,6 +8,7 @@ use Modules\BookingModule\Http\Controllers\Api\V1\Admin\BookingController as Adm
 use Modules\BookingModule\Http\Controllers\Api\V1\BookingRecheckController;
 use Modules\BookingModule\Http\Controllers\Api\V1\UnsatisfiedRequestController;
 use Modules\BookingModule\Http\Controllers\Api\V1\Customer\ServicemanSelectionController;
+use Modules\BookingModule\Http\Controllers\Api\V1\Serviceman\FaceVerificationController as ServicemanFaceVerificationController;
 
 Route::group(['prefix' => 'client', 'as' => 'customer.', 'namespace' => 'Api\V1\Customer', 'middleware' => ['auth:api']], function () {
     Route::group(['prefix' => 'order', 'as' => 'booking.'], function () {
@@ -42,7 +43,6 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'namespace' => 'Api\V1\Admi
         Route::get('data/download', [AdminBookingController::class, 'download']);
     });
 });
-
 Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1\Provider', 'middleware' => ['auth:api', 'actch:provider_app']], function () {
     Route::group(['prefix' => 'order', 'as' => 'booking.'], function () {
         Route::post('/', [ProviderBookingController::class, 'index']);
@@ -78,7 +78,10 @@ Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1
 
 
 Route::group(['prefix' => 'technician', 'as' => 'serviceman.', 'namespace' => 'Api\V1\Serviceman', 'middleware' => ['auth:api', 'actch:serviceman_app']], function () {
+    Route::get('face-profile', [ServicemanFaceVerificationController::class, 'profileStatus']);
+    Route::post('face-profile/enroll', [ServicemanFaceVerificationController::class, 'enroll']);
     Route::group(['prefix' => 'order', 'as' => 'booking.'], function () {
+        Route::post('{booking_id}/face-check', [ServicemanFaceVerificationController::class, 'verify']);
         Route::put('state-change/{booking_id}', [ServicemanBookingController::class, 'statusUpdate']);
         Route::put('individual-recurring-state-change/{booking_id}', [ServicemanBookingController::class, 'singleBookingStatusUpdate']);
         Route::put('pay-state-change/{booking_id}', [ServicemanBookingController::class, 'paymentStatusUpdate']);
@@ -122,3 +125,5 @@ Route::group(['prefix' => 'client', 'as' => 'customer.serviceman.', 'namespace' 
     Route::post('get-available-servicemen', [ServicemanSelectionController::class, 'getAvailableServicemen'])->withoutMiddleware('auth:api');
     Route::post('assign-serviceman-manual', [ServicemanSelectionController::class, 'assignServicemanManual']);
 });
+
+

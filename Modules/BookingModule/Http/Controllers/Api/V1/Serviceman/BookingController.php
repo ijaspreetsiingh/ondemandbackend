@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Modules\BookingModule\Entities\Booking;
 use Modules\BookingModule\Entities\BookingDetail;
+use Modules\BookingModule\Entities\BookingFaceVerification;
 use Modules\BookingModule\Entities\BookingRepeat;
 use Modules\BookingModule\Entities\BookingRepeatDetails;
 use Modules\BookingModule\Entities\BookingRepeatHistory;
@@ -97,6 +98,16 @@ class BookingController extends Controller
                 if ($request['start_otp'] != $booking->start_otp) {
                     return response()->json(response_formatter(OTP_VERIFICATION_FAIL_403), 200);
                 }
+                $faceVerified = BookingFaceVerification::where('booking_id', $booking->id)
+                    ->where('serviceman_id', $request->user()->serviceman->id)
+                    ->whereIn('status', ['verified', 'provider_approved'])
+                    ->exists();
+                if (!$faceVerified) {
+                    return response()->json([
+                        'response_code' => 'face_verification_required_403',
+                        'message' => translate('Complete face verification before starting this service.'),
+                    ], 403);
+                }
             }
 
             if ($bookingStatus == 'completed' && (business_config('service_complete_photo_evidence', 'booking_setup'))?->live_values == 1) {
@@ -165,6 +176,16 @@ class BookingController extends Controller
                 }
                 if ((string) $request->input('start_otp') !== (string) $booking->start_otp) {
                     return response()->json(response_formatter(OTP_VERIFICATION_FAIL_403), 200);
+                }
+                $faceVerified = BookingFaceVerification::where('booking_repeat_id', $booking->id)
+                    ->where('serviceman_id', $request->user()->serviceman->id)
+                    ->whereIn('status', ['verified', 'provider_approved'])
+                    ->exists();
+                if (!$faceVerified) {
+                    return response()->json([
+                        'response_code' => 'face_verification_required_403',
+                        'message' => translate('Complete face verification before starting this service.'),
+                    ], 403);
                 }
             }
 
@@ -1845,3 +1866,4 @@ class BookingController extends Controller
         return response()->json(response_formatter(DEFAULT_UPDATE_200), 200);
     }
 }
+

@@ -28,6 +28,9 @@ database_backup_*
 !README.md
 *.txt
 !composer.lock
+!FACE_VERIFICATION_SETUP.md
+!requirements-face.txt
+/storage/app/private/face_models/
 
 # Build / dev artifacts
 composer.phar

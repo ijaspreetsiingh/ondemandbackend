@@ -38,3 +38,18 @@ Schedule::command('backup:run --disable-notifications')->dailyAt('02:30')->witho
 Schedule::command('backup:clean --disable-notifications')->dailyAt('03:30')->withoutOverlapping();
 Schedule::command('queue:prune-failed --hours=48')->dailyAt('04:00');
 Schedule::command('queue:prune --hours=48')->dailyAt('04:15');
+
+// FACE VERIFICATION: failed capture is retained privately for Provider review for one day.
+Schedule::call(function () {
+    $expired = \Modules\BookingModule\Entities\BookingFaceVerification::query()
+        ->whereNotNull('capture_expires_at')
+        ->where('capture_expires_at', '<=', now())
+        ->get(['id', 'last_capture_path']);
+
+    foreach ($expired as $entry) {
+        if ($entry->last_capture_path) {
+            \Illuminate\Support\Facades\Storage::disk('local')->delete($entry->last_capture_path);
+        }
+        $entry->update(['last_capture_path' => null, 'capture_expires_at' => null]);
+    }
+})->hourly()->name('expire-face-review-captures')->withoutOverlapping();
