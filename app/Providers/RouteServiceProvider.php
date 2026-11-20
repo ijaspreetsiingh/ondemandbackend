@@ -63,14 +63,18 @@ class RouteServiceProvider extends ServiceProvider
         // Login endpoints: normal users ko block na kare, brute-force ko block kare.
         RateLimiter::for('login', function (Request $request) {
             $identifier = strtolower((string) ($request->input('email_or_phone')
+                ?? $request->input('phone_or_email')
                 ?? $request->input('email')
                 ?? $request->input('phone')
                 ?? $request->input('phone_number')
+                ?? $request->input('phoneNumber')
+                ?? $request->input('identity')
                 ?? ''));
 
             return [
                 Limit::perMinute(5)->by('login-min:' . $request->ip() . ':' . $identifier),
                 Limit::perHour(25)->by('login-hour:' . $request->ip() . ':' . $identifier),
+                Limit::perHour(25)->by('login-target:' . $identifier),
             ];
         });
 

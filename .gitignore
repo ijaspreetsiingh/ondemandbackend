@@ -35,6 +35,9 @@ database_backup_*
 # Build / dev artifacts
 composer.phar
 build.log
+.venv-face/
+scripts/__pycache__/
+__pycache__/
 
 # Database backups
 installation/backup/*.sql

@@ -17,21 +17,21 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'namespace' => 'Api\V1\Admi
 Route::group(['prefix' => 'member', 'namespace' => 'Api\V1'], function () {
     //verification
     Route::group(['prefix' => 'validation'], function () {
-        Route::post('transmit-pin', [OTPVerificationController::class, 'check']);
-        Route::post('check-pin', [OTPVerificationController::class, 'verify']);
+        Route::post('transmit-pin', [OTPVerificationController::class, 'check'])->middleware('throttle:login');
+        Route::post('check-pin', [OTPVerificationController::class, 'verify'])->middleware('throttle:login');
 
-        Route::post('firebase-access-check', [OTPVerificationController::class, 'firebaseAuthVerify']);
-        Route::post('signin-pin-check', [OTPVerificationController::class, 'loginVerifyOTP']);
-        Route::post('signup-with-pin', [OTPVerificationController::class, 'registrationWithOTP']);
+        Route::post('firebase-access-check', [OTPVerificationController::class, 'firebaseAuthVerify'])->middleware('throttle:login');
+        Route::post('signin-pin-check', [OTPVerificationController::class, 'loginVerifyOTP'])->middleware('throttle:login');
+        Route::post('signup-with-pin', [OTPVerificationController::class, 'registrationWithOTP'])->middleware('throttle:login');
     });
 
     //forget password
     Route::group(['prefix' => 'lost-secret'], function () {
-        Route::post('transmit-pin', [PasswordResetController::class, 'check']);
-        Route::post('check-pin', [PasswordResetController::class, 'verify']);
-        Route::put('restore', [PasswordResetController::class, 'resetPassword']);
+        Route::post('transmit-pin', [PasswordResetController::class, 'check'])->middleware('throttle:login');
+        Route::post('check-pin', [PasswordResetController::class, 'verify'])->middleware('throttle:login');
+        Route::put('restore', [PasswordResetController::class, 'resetPassword'])->middleware('throttle:login');
     });
 
-    Route::post('verify-member-exists', [OTPVerificationController::class, 'checkExistingCustomer']);
+    Route::post('verify-member-exists', [OTPVerificationController::class, 'checkExistingCustomer'])->middleware('throttle:login');
 });
 

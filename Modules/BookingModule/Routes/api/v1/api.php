@@ -18,7 +18,7 @@ Route::group(['prefix' => 'client', 'as' => 'customer.', 'namespace' => 'Api\V1\
         Route::post('submission/transmit', [BookingController::class, 'placeRequest'])->middleware('hitLimiter')->withoutMiddleware('auth:api');
         Route::put('state-change/{booking_id}', [BookingController::class, 'statusUpdate']);
         Route::post('individual-recurring-abort/{repeat_id}', [BookingController::class, 'singleBookingCancel']);
-        Route::post('trace/{readable_id}', [BookingController::class, 'track'])->withoutMiddleware('auth:api');
+        Route::post('trace/{readable_id}', [BookingController::class, 'track'])->withoutMiddleware('auth:api')->middleware('throttle:login');
         Route::post('persist-cash-record', [BookingController::class, 'storeOfflinePaymentData'])->withoutMiddleware('auth:api');
         Route::post('change-pay-mode', [BookingController::class, 'switchPaymentMethod'])->withoutMiddleware('auth:api');
         Route::get('serviceman-location/{booking_id}', [BookingController::class, 'servicemanLocation']);
@@ -77,7 +77,7 @@ Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1
 });
 
 
-Route::group(['prefix' => 'technician', 'as' => 'serviceman.', 'namespace' => 'Api\V1\Serviceman', 'middleware' => ['auth:api', 'actch:serviceman_app']], function () {
+Route::group(['prefix' => 'technician', 'as' => 'serviceman.', 'namespace' => 'Api\V1\Serviceman', 'middleware' => ['auth:api', 'api.role:provider-serviceman', 'actch:serviceman_app']], function () {
     Route::get('face-profile', [ServicemanFaceVerificationController::class, 'profileStatus']);
     Route::post('face-profile/enroll', [ServicemanFaceVerificationController::class, 'enroll']);
     Route::group(['prefix' => 'order', 'as' => 'booking.'], function () {

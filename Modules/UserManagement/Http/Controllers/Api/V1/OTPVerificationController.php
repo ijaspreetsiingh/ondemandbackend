@@ -145,7 +145,7 @@ class OTPVerificationController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'identity' => 'required',
-            'identity_type' => 'required',
+            'identity_type' => 'required|in:phone,email',
             'otp' => 'required|max:6'
         ]);
 
@@ -162,7 +162,12 @@ class OTPVerificationController extends Controller
         $maxOtpHitTime = business_config('otp_resend_time', 'otp_login_setup')->test_values ?? 60;// seconds
         $tempBlockTime = business_config('temporary_otp_block_time', 'otp_login_setup')->test_values ?? 600; // seconds
 
-        $verify = $this->userVerification->where(['identity' => $request['identity'], 'otp' => $request['otp']])->first();
+        $verify = $this->userVerification
+            ->where('identity', $request['identity'])
+            ->where('identity_type', $request['identity_type'])
+            ->where('otp', $request['otp'])
+            ->where('expires_at', '>', now())
+            ->first();
 
         if (isset($verify)) {
             if(isset($verify->temp_block_time ) && Carbon::parse($verify->temp_block_time)->DiffInSeconds() <= $tempBlockTime){
@@ -265,7 +270,12 @@ class OTPVerificationController extends Controller
         $maxOtpHitTime = business_config('otp_resend_time', 'otp_login_setup')->test_values ?? 60; // seconds
         $tempBlockTime = business_config('temporary_otp_block_time', 'otp_login_setup')->test_values ?? 600; // seconds
 
-        $verify = $this->userVerification->where(['identity' => $request['phone'], 'otp' => $request['otp']])->first();
+        $verify = $this->userVerification
+            ->where('identity', $request['phone'])
+            ->where('identity_type', 'phone')
+            ->where('otp', $request['otp'])
+            ->where('expires_at', '>', now())
+            ->first();
 
         if (isset($verify)) {
             if(isset($verify->temp_block_time ) && Carbon::parse($verify->temp_block_time)->DiffInSeconds() <= $tempBlockTime){
@@ -401,6 +411,7 @@ class OTPVerificationController extends Controller
             'sessionInfo' => 'required',
             'phoneNumber' => 'required',
             'code' => 'required',
+            'user_type' => 'required|in:customer',
         ]);
 
         if ($validator->fails()) {
@@ -422,14 +433,18 @@ class OTPVerificationController extends Controller
             return response()->json(response_formatter(OTP_VERIFICATION_FAIL_403), 403);
         }
 
-        $user = $this->user->where('phone', $responseData['phoneNumber'])->first();
+        $user = $this->user->ofType(CUSTOMER_USER_TYPES)
+            ->where('phone', $responseData['phoneNumber'])->first();
 
         if ($request['guest_id'] && isset($user)){
             $this->updateAddressAndCartUser($user->id, $request['guest_id']);
         }
 
         if (isset($user)){
-            if ($user?->user_type == $request->user_type){
+            if ($user?->user_type == 'customer'){
+                if ($user->is_active != 1) {
+                    return response()->json(response_formatter(USER_INACTIVE_400), 400);
+                }
                 $user->is_phone_verified = 1;
                 $user->save();
                 return response()->json(response_formatter(AUTH_LOGIN_200, self::authenticate($user, CUSTOMER_PANEL_ACCESS)), 200);

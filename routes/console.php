@@ -41,6 +41,11 @@ Schedule::command('queue:prune --hours=48')->dailyAt('04:15');
 
 // FACE VERIFICATION: failed capture is retained privately for Provider review for one day.
 Schedule::call(function () {
+    // Deployment safety: a missing table must not spam the scheduler log.
+    if (!\Illuminate\Support\Facades\Schema::hasTable('booking_face_verifications')) {
+        return;
+    }
+
     $expired = \Modules\BookingModule\Entities\BookingFaceVerification::query()
         ->whereNotNull('capture_expires_at')
         ->where('capture_expires_at', '<=', now())

@@ -716,8 +716,8 @@ class ProviderController extends Controller
         if (isset($customer)) {
             // SECURITY: fixed token sirf local/demo env; prod/live me hamesha random.
             $token = in_array(config('app.env'), ['local', 'demo'], true)
-                ? '1234'
-                : (string) random_int(1000, 9999);
+                ? '123456'
+                : (string) random_int(100000, 999999);
 
             DB::table('password_resets')->insert([
                 'phone' => $customer['phone'],
@@ -753,8 +753,6 @@ class ProviderController extends Controller
                 }
             }
 
-        } else {
-            return response()->json(response_formatter(DEFAULT_404), 200);
         }
 
         return response()->json(response_formatter(DEFAULT_SENT_OTP_200), 200);
@@ -778,7 +776,8 @@ class ProviderController extends Controller
 
         $data = DB::table('password_resets')
             ->where('phone', $request['phone_or_email'])
-            ->where(['token' => $request['otp']])->first();
+            ->where('token', $request['otp'])
+            ->where('expires_at', '>', now())->first();
 
         if (isset($data)) {
             return response()->json(response_formatter(DEFAULT_VERIFIED_200), 200);
@@ -817,6 +816,9 @@ class ProviderController extends Controller
                 ->update([
                     'password' => bcrypt(str_replace(' ', '', $request['password']))
                 ]);
+            $provider = $this->user->whereIn('user_type', PROVIDER_USER_TYPES)
+                ->where('phone', $request['phone_or_email'])->first();
+            $provider?->tokens()->update(['revoked' => true]);
             DB::table('password_resets')
                 ->where('phone', $request['phone_or_email'])
                 ->where(['token' => $request['otp']])->delete();

@@ -42,10 +42,13 @@ class PasswordResetController extends Controller
             return response()->json(response_formatter(DEFAULT_400, null, error_processor($validator)), 400);
         }
 
-        $user = $this->user->where($request['identity_type'], $request['identity'])->first();
+        $user = $this->user->ofType(CUSTOMER_USER_TYPES)
+            ->where($request['identity_type'], $request['identity'])->first();
 
-        if (!isset($user))
-            return response()->json(response_formatter(AUTH_LOGIN_404), 404);
+        if (!isset($user)) {
+            // Do not disclose whether a phone number or email has an account.
+            return response()->json(response_formatter(DEFAULT_SENT_OTP_200), 200);
+        }
 
 
         //resend time check
@@ -125,7 +128,7 @@ class PasswordResetController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'identity' => 'required',
-            'identity_type' => 'required',
+            'identity_type' => 'required|in:phone,email',
             'otp' => 'required|max:6'
         ]);
 
@@ -137,7 +140,11 @@ class PasswordResetController extends Controller
         $maxOtpHitTime = business_config('otp_resend_time', 'otp_login_setup')->test_values ?? 60;// seconds
         $tempBlockTime = business_config('temporary_otp_block_time', 'otp_login_setup')->test_values ?? 600; // seconds
 
-        $verify = $this->userVerification->where(['identity' => $request['identity'], 'otp' => $request['otp']])->first();
+        $verify = $this->userVerification
+            ->where('identity_type', $request['identity_type'])
+            ->where('identity', $request['identity'])
+            ->where('otp', $request['otp'])
+            ->where('expires_at', '>', now())->first();
 
         if (isset($verify)) {
             if (isset($verify->temp_block_time) && Carbon::parse($verify->temp_block_time)->DiffInSeconds() <= $tempBlockTime) {
@@ -219,7 +226,7 @@ class PasswordResetController extends Controller
             'identity_type' => 'required|in:email,phone',
             'otp' => 'required|max:6',
             'password' => 'required',
-            'confirm_password' => 'required|same:confirm_password',
+            'confirm_password' => 'required|same:password',
             'is_firebase_otp' => 'required|in:0,1'
         ]);
 
@@ -227,35 +234,35 @@ class PasswordResetController extends Controller
             return response()->json(response_formatter(DEFAULT_400, null, error_processor($validator)), 400);
         }
 
-        if ($request->is_firebase_otp == 1){
-            $this->user->where($request['identity_type'], $request['identity'])
-                ->update([
-                    'password' => bcrypt(str_replace(' ', '', $request['password']))
-                ]);
+        // A client supplied Firebase flag is not proof of phone ownership. This
+        // endpoint accepts only a backend-issued OTP that is still valid.
+        if ((string) $request->is_firebase_otp === '1') {
+            return response()->json(response_formatter(DEFAULT_404), 404);
+        }
 
-        }else{
-            $userVerification = $this->userVerification
+        $user = $this->user->ofType(CUSTOMER_USER_TYPES)
+            ->where($request['identity_type'], $request['identity'])->first();
+        if (!$user) {
+            return response()->json(response_formatter(DEFAULT_404), 404);
+        }
+
+        $userVerification = $this->userVerification
                 ->where('identity_type', $request['identity_type'])
                 ->where('identity', $request['identity'])
-                ->where(['otp' => $request['otp']])
+                ->where('otp', $request['otp'])
                 ->where('expires_at', '>', now())
                 ->first();
 
-            if (isset($userVerification)) {
-                return response()->json(response_formatter(DEFAULT_404), 404);
-            }
-
-            $this->user->where($request['identity_type'], $request['identity'])
-                ->update([
-                    'password' => bcrypt(str_replace(' ', '', $request['password']))
-                ]);
-
-            $this->userVerification
-                ->where('identity_type', $request['identity_type'])
-                ->where('identity', $request['identity'])
-                ->where(['otp' => $request['otp']])->delete();
-
+        if (!$userVerification) {
+            return response()->json(response_formatter(DEFAULT_404), 404);
         }
+
+        DB::transaction(function () use ($user, $userVerification, $request) {
+            $user->password = bcrypt(str_replace(' ', '', $request['password']));
+            $user->save();
+            $user->tokens()->update(['revoked' => true]);
+            $userVerification->delete();
+        });
         return response()->json(response_formatter(DEFAULT_PASSWORD_RESET_200), 200);
     }
 }

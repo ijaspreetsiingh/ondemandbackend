@@ -26,6 +26,11 @@ class AuthServiceProvider extends ServiceProvider
     {
         $this->registerPolicies();
 
+        // Bound personal access tokens issued to the mobile/web apps. Users must
+        // sign in again periodically if a stolen token is not manually revoked.
+        Passport::personalAccessTokensExpireIn(now()->addDays(30));
+        Passport::tokensExpireIn(now()->addDays(30));
+
         Gate::define('dashboard', fn () => $this->checkAccess('dashboard', 'can_view'));
 
         Gate::define('booking_view', fn () => $this->checkAccess('booking', 'can_view'));

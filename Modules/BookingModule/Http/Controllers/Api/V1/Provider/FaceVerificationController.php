@@ -45,7 +45,8 @@ class FaceVerificationController extends Controller
             (!$verification->capture_expires_at || $verification->capture_expires_at->isFuture()) &&
             Storage::disk('local')->exists($verification->last_capture_path)
         ) {
-            $image = 'data:image/jpeg;base64,' . base64_encode(
+            $mime = Storage::disk('local')->mimeType($verification->last_capture_path) ?: 'image/jpeg';
+            $image = 'data:' . $mime . ';base64,' . base64_encode(
                 Storage::disk('local')->get($verification->last_capture_path)
             );
         }

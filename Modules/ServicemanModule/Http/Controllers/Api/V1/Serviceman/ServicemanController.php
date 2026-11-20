@@ -563,7 +563,9 @@ class ServicemanController extends Controller
             ->first();
 
         if (isset($customer)) {
-            $token = env('APP_ENV') != 'live' ? '1234' : rand(1000, 9999);
+            $token = in_array(config('app.env'), ['local', 'demo'], true)
+                ? '123456'
+                : (string) random_int(100000, 999999);
 
             DB::table('password_resets')->insert([
                 'phone' => $customer['phone'],
@@ -599,7 +601,7 @@ class ServicemanController extends Controller
 
             return response()->json(response_formatter(DEFAULT_SENT_OTP_200), 200);
         }
-        return response()->json(response_formatter(DEFAULT_404), 200);
+        return response()->json(response_formatter(DEFAULT_SENT_OTP_200), 200);
     }
 
     /**
@@ -620,7 +622,8 @@ class ServicemanController extends Controller
 
         $data = DB::table('password_resets')
             ->where('phone', $request['phone_or_email'])
-            ->where(['token' => $request['otp']])->first();
+            ->where('token', $request['otp'])
+            ->where('expires_at', '>', now())->first();
 
         if (isset($data)) {
             return response()->json(response_formatter(DEFAULT_VERIFIED_200), 200);
@@ -640,7 +643,7 @@ class ServicemanController extends Controller
             'phone_or_email' => 'required',
             'otp' => 'required',
             'password' => 'required',
-            'confirm_password' => 'required|same:confirm_password'
+            'confirm_password' => 'required|same:password'
         ]);
 
         if ($validator->fails()) {
@@ -659,6 +662,9 @@ class ServicemanController extends Controller
                 ->update([
                     'password' => bcrypt(str_replace(' ', '', $request['password']))
                 ]);
+            $serviceman = $this->employee->where('user_type', PROVIDER_USER_TYPES[2])
+                ->where('phone', $request['phone_or_email'])->first();
+            $serviceman?->tokens()->update(['revoked' => true]);
             DB::table('password_resets')
                 ->where('phone', $request['phone_or_email'])
                 ->where(['token' => $request['otp']])->delete();

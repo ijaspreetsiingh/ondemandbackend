@@ -7,7 +7,7 @@ use Modules\ServicemanModule\Http\Controllers\Api\V1\Provider\ServicemanControll
 use Modules\ServicemanModule\Http\Controllers\Api\V1\Serviceman\ServicemanController;
 
 //provider routes
-Route::group(['prefix' => 'partner', 'as' => 'provider', 'namespace' => 'Api\V1\Provider', 'middleware' => ['auth:api', 'actch:provider_app']], function () {
+Route::group(['prefix' => 'partner', 'as' => 'provider', 'namespace' => 'Api\V1\Provider', 'middleware' => ['auth:api', 'api.role:provider-admin,provider-employee', 'actch:provider_app']], function () {
 
     //serviceman
     Route::group(['prefix' => 'technician', 'as' => 'serviceman.'], function () {
@@ -26,18 +26,18 @@ Route::group(['prefix' => 'partner', 'as' => 'provider', 'namespace' => 'Api\V1\
 //customer section
 Route::group(['prefix' => 'technician', 'as' => 'serviceman.', 'namespace' => 'Api\V1\Serviceman'], function () {
 
-    Route::post('secret-recovery', [ServicemanController::class, 'forgotPassword']);
-    Route::post('pin-validation', [ServicemanController::class, 'otpVerification']);
-    Route::put('secret-restore', [ServicemanController::class, 'resetPassword']);
+    Route::post('secret-recovery', [ServicemanController::class, 'forgotPassword'])->middleware('throttle:login');
+    Route::post('pin-validation', [ServicemanController::class, 'otpVerification'])->middleware('throttle:login');
+    Route::put('secret-restore', [ServicemanController::class, 'resetPassword'])->middleware('throttle:login');
 
-    Route::group(['middleware' => ['auth:api', 'actch:serviceman_app']], function () {
+    Route::group(['middleware' => ['auth:api', 'api.role:provider-serviceman', 'actch:serviceman_app']], function () {
         Route::get('overview', [ServicemanController::class, 'dashboard']);
         Route::get('overview/order-metrics', [ServicemanController::class, 'bookingStatistics']);
         Route::get('overview/earnings-range', [ServicemanController::class, 'earningsRange']);
 
         Route::group(['prefix' => 'setup'], function () {
-            Route::get('/', [ServicemanConfigController::class, 'configuration'])->withoutMiddleware(['auth:api', 'actch:serviceman_app']);
-            Route::get('page-facts/{key}', [ServicemanConfigController::class, 'pageDetails'])->withoutMiddleware('auth:api');
+            Route::get('/', [ServicemanConfigController::class, 'configuration'])->withoutMiddleware(['auth:api', 'api.role:provider-serviceman', 'actch:serviceman_app']);
+            Route::get('page-facts/{key}', [ServicemanConfigController::class, 'pageDetails'])->withoutMiddleware(['auth:api', 'api.role:provider-serviceman']);
 
             Route::get('fetch-region-id', [ServicemanConfigController::class, 'getZone']);
             Route::middleware('throttle:geo')->group(function () {

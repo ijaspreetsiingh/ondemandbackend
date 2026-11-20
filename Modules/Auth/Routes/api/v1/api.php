@@ -21,11 +21,11 @@ Route::group(['prefix' => 'partner', 'as' => 'provider', 'namespace' => 'Api\V1'
 
 Route::group(['prefix' => 'client', 'as' => 'customer', 'namespace' => 'Api\V1'], function () {
     Route::group(['prefix' => 'access', 'as' => 'auth.'], function () {
-        Route::post('signup', [RegisterController::class, 'customerRegister'])->name('registration');
+        Route::post('signup', [RegisterController::class, 'customerRegister'])->middleware('throttle:login')->name('registration');
         Route::post('signin', [LoginController::class, 'customerLogin'])->middleware('throttle:login')->name('login');
-        Route::post('signin-via-social', [LoginController::class, 'customerSocialLogin'])->name('social-login');
-        Route::post('account-probe', [LoginController::class, 'existingAccountCheck']);
-        Route::post('signup-via-social', [LoginController::class, 'registrationWithSocialMedia']);
+        Route::post('signin-via-social', [LoginController::class, 'customerSocialLogin'])->middleware('throttle:login')->name('social-login');
+        Route::post('account-probe', [LoginController::class, 'existingAccountCheck'])->middleware('throttle:login');
+        Route::post('signup-via-social', [LoginController::class, 'registrationWithSocialMedia'])->middleware('throttle:login');
         Route::post('signout', [LoginController::class, 'customerLogOut'])->middleware('auth:api');
     });
 });

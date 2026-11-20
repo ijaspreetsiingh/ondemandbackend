@@ -1,2 +1,2 @@
-numpy==1.26.4
-opencv-contrib-python-headless==4.10.0.84
+numpy>=1.26,<3
+opencv-contrib-python-headless>=4.10,<5

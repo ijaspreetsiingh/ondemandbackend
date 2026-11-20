@@ -20,20 +20,20 @@ use Modules\ProviderManagement\Http\Controllers\Api\V1\Admin\ProviderController 
 
 
 Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1\Provider'], function () {
-    Route::post('secret-recovery', [ProviderProviderController::class, 'forgotPassword']);
-    Route::post('pin-validation', [ProviderProviderController::class, 'otpVerification']);
-    Route::put('secret-restore', [ProviderProviderController::class, 'resetPassword']);
+    Route::post('secret-recovery', [ProviderProviderController::class, 'forgotPassword'])->middleware('throttle:login');
+    Route::post('pin-validation', [ProviderProviderController::class, 'otpVerification'])->middleware('throttle:login');
+    Route::put('secret-restore', [ProviderProviderController::class, 'resetPassword'])->middleware('throttle:login');
     Route::post('locale-switch', [ProviderProviderController::class, 'changeLanguage']);
 });
-Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1\Provider', 'middleware' => ['auth:api', 'actch:provider_app']], function () {
+Route::group(['prefix' => 'partner', 'as' => 'provider.', 'namespace' => 'Api\V1\Provider', 'middleware' => ['auth:api', 'api.role:provider-admin,provider-employee', 'actch:provider_app']], function () {
     Route::get('/', [ProviderProviderController::class, 'index']);
     Route::get('overview', [ProviderProviderController::class, 'dashboard']);
     Route::get('overview/income', [ProviderProviderController::class, 'earningStatistics']);
     Route::get('fetch-bank-facts', [ProviderProviderController::class, 'getBankDetails']);
     Route::put('modify-bank-facts', [ProviderProviderController::class, 'updateBankDetails']);
 
-    Route::get('setup', [ProviderConfigController::class, 'config'])->withoutMiddleware(['auth:api', 'actch:provider_app']);
-    Route::get('setup/page-facts/{key}', [ProviderConfigController::class, 'pageDetails'])->withoutMiddleware('auth:api');
+    Route::get('setup', [ProviderConfigController::class, 'config'])->withoutMiddleware(['auth:api', 'api.role:provider-admin,provider-employee', 'actch:provider_app']);
+    Route::get('setup/page-facts/{key}', [ProviderConfigController::class, 'pageDetails'])->withoutMiddleware(['auth:api', 'api.role:provider-admin,provider-employee']);
 
     Route::get('dossier', [ProviderProviderController::class, 'index']);
     Route::get('reconcile', [ProviderProviderController::class, 'adjust']);

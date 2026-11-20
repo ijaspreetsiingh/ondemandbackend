@@ -460,13 +460,34 @@ class BookingController extends Controller
             ->whereHas('service_address', fn($query) => $query->where('contact_person_number', $request['phone']))
             ->first();
 
+        if (!isset($booking)) {
+            return response()->json(response_formatter(DEFAULT_404), 404);
+        }
+
         $booking->service_address = $booking->service_address_location != null ? json_decode($booking->service_address_location) : $booking->service_address;
 
         unset($booking->service_address_location);
 
-        if (isset($booking)) return response()->json(response_formatter(DEFAULT_200, $booking), 200);
+        // The tracking route is intentionally public for guest bookings. Never
+        // expose verification codes, account identifiers, location, or device
+        // tokens through the eagerly loaded customer/serviceman records.
+        $booking->makeHidden(['booking_otp', 'start_otp']);
+        $privateUserFields = [
+            'password', 'fcm_token', 'identification_number', 'identification_type',
+            'identification_image', 'date_of_birth', 'gender', 'wallet_balance',
+            'loyalty_point', 'ref_code', 'referred_by', 'current_lat', 'current_lng',
+            'last_location_updated_at',
+        ];
+        $booking->customer?->makeHidden($privateUserFields);
+        $booking->serviceman?->user?->makeHidden($privateUserFields);
+        foreach ($booking->status_histories ?? [] as $history) {
+            $history->user?->makeHidden($privateUserFields);
+        }
+        foreach ($booking->schedule_histories ?? [] as $history) {
+            $history->user?->makeHidden($privateUserFields);
+        }
 
-        return response()->json(response_formatter(DEFAULT_404, $booking), 404);
+        return response()->json(response_formatter(DEFAULT_200, $booking), 200);
     }
 
     /**

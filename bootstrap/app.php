@@ -89,6 +89,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
             'hitLimiter' => ApiHitLimitMiddleware::class,
             'detectUser' => DetectUser::class,
             'admin' => \Modules\AdminModule\Http\Middleware\AdminMiddleware::class,
+            'api.role' => \Modules\UserManagement\Http\Middleware\EnsureApiUserType::class,
             'provider' => ProviderMiddleware::class,
             'serviceman' => ServicemanMiddleware::class,
             'ensureBiddingIsActive' => EnsureBiddingIsActive::class,

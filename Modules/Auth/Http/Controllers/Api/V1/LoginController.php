@@ -448,10 +448,14 @@ class LoginController extends Controller
             $this->updateAddressAndCartUser($user->id, $request['guest_id']);
         }
 
+        if ($user->is_active != 1) {
+            return response()->json(response_formatter(ACCOUNT_DISABLED), 401);
+        }
+
         if ($user->is_email_verified == 1){
             return response()->json(response_formatter(AUTH_LOGIN_200, self::authenticate($user, CUSTOMER_PANEL_ACCESS)), 200);
         }else{
-            return response()->json(response_formatter(AUTH_LOGIN_200, ['user' => $user, 'status' => false], 200));
+            return response()->json(response_formatter(AUTH_LOGIN_200, ['status' => false], 200));
         }
     }
 
@@ -461,35 +465,10 @@ class LoginController extends Controller
      */
     public function existingAccountCheck(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'email' => 'required|email',
-            'user_response' => 'required|in:0,1',
-            'medium' => 'required|in:google,facebook,apple',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(response_formatter(DEFAULT_400, null, error_processor($validator)), 400);
-        }
-
-        $user = $this->user->where('email', $request['email'])->first();
-
-        $temporaryToken = Str::random(40);
-        if (!$user) {
-            return response()->json(response_formatter(AUTH_LOGIN_200, ['temporary_token' => $temporaryToken, 'status' => false], 200));
-        }
-
-        if ($request['user_response'] == 1) {
-            $user->is_email_verified = 1;
-            $user->save();
-
-            return response()->json(response_formatter(AUTH_LOGIN_200, self::authenticate($user, CUSTOMER_PANEL_ACCESS)), 200);
-        }
-
-        $user->email = null;
-        $user->is_email_verified = 0;
-        $user->save();
-
-        return response()->json(response_formatter(AUTH_LOGIN_200, ['temporary_token' => $temporaryToken, 'status' => false], 200));
+        // This legacy endpoint trusted an email + client boolean and could issue
+        // a customer token without verifying Google/Facebook/Apple credentials.
+        // Use customerSocialLogin, which validates the provider credential.
+        return response()->json(response_formatter(AUTH_LOGIN_401), 401);
     }
 
     /**
@@ -498,56 +477,9 @@ class LoginController extends Controller
      */
     public function registrationWithSocialMedia(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'email' => 'required|email|max:255',
-            'phone' => 'required|max:15',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(response_formatter(DEFAULT_400, null, error_processor($validator)), 400);
-        }
-
-        $existingUser = $this->user->where(function ($query) use ($request) {
-            $query->where('phone', $request['phone'])
-                ->orWhere('email', $request['email']);
-        })->first();
-
-        if ($existingUser) {
-            if ($existingUser->phone === $request['phone']) {
-                return response()->json(response_formatter(ALREADY_USE_NUMBER_ANOTHER_ACCOUNT), 403);
-            }
-
-            if ($existingUser->email === $request['email']) {
-                return response()->json(response_formatter(ALREADY_USE_EMAIL_ANOTHER_ACCOUNT), 403);
-            }
-        }
-
-        $temporaryToken = Str::random(40);
-
-        $user = $this->user->create([
-            'first_name' => $request->first_name,
-            'last_name' => $request->last_name,
-            'email' => $request->email,
-            'phone' => $request->phone,
-            'password' => bcrypt(rand(11111111, 99999999)),
-            'language_code' => $request->header('X-localization') ?? 'en',
-            'is_email_verified' => 1,
-            'is_active' => 1,
-        ]);
-
-        if ($request['guest_id']){
-            $this->updateAddressAndCartUser($user->id, $request['guest_id']);
-        }
-
-        $phoneVerification = checkActiveSMSGatewayCount();
-
-        if ($phoneVerification){
-            return response()->json(response_formatter(AUTH_LOGIN_200, ['temporary_token' => $temporaryToken, 'status' => false], 200));
-        }
-
-        return response()->json(response_formatter(AUTH_LOGIN_200, self::authenticate($user, CUSTOMER_PANEL_ACCESS)), 200);
+        // This legacy endpoint created verified accounts from caller supplied
+        // email/phone/profile fields without a social-provider proof.
+        return response()->json(response_formatter(AUTH_LOGIN_401), 401);
     }
 
     /**
