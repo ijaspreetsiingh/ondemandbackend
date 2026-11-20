@@ -19,9 +19,16 @@ class FaceVerificationEngine
 
     private function run(array $arguments): array
     {
-        $python = env('FACE_PYTHON_BINARY', 'python3');
+        $python = config('face_verification.python_binary', base_path('.venv-face/bin/python'));
         $script = base_path('scripts/face_engine.py');
-        $process = new Process(array_merge([$python, $script], $arguments), base_path());
+        $process = new Process(
+            array_merge([$python, $script], $arguments),
+            base_path(),
+            [
+                'FACE_MODEL_DIR' => config('face_verification.model_dir'),
+                'FACE_MATCH_THRESHOLD' => (string) config('face_verification.match_threshold', 0.363),
+            ],
+        );
         $process->setTimeout(40);
         $process->run();
 
