@@ -124,7 +124,7 @@ class ServicemanSelectionController extends Controller
 
             // Offer only servicemen who can receive an assignment right now.
             // CATEGORY FILTER: Serviceman must have this sub_category assigned
-            $servicemenQuery = Serviceman::with(['user:id,first_name,last_name,profile_image,latitude,longitude'])
+            $servicemenQuery = Serviceman::with(['user:id,first_name,last_name,profile_image,current_lat,current_lng'])
                 ->where('provider_id', $providerId)
                 ->where('is_on_duty', 1)
                 ->whereHas('user', fn($q) => $q->where('is_active', 1));
@@ -176,8 +176,10 @@ class ServicemanSelectionController extends Controller
 
                 // Calculate distance if coordinates provided
                 $distance = null;
-                if ($customerLat && $customerLon && $serviceman->user && $serviceman->user->latitude && $serviceman->user->longitude) {
-                    $distance = calculateDistance($customerLat, $customerLon, $serviceman->user->latitude, $serviceman->user->longitude);
+                $servicemanLat = $serviceman->user?->current_lat;
+                $servicemanLon = $serviceman->user?->current_lng;
+                if ($customerLat !== null && $customerLon !== null && $servicemanLat !== null && $servicemanLon !== null) {
+                    $distance = calculateDistance($customerLat, $customerLon, $servicemanLat, $servicemanLon);
                 }
 
                 $result[] = [

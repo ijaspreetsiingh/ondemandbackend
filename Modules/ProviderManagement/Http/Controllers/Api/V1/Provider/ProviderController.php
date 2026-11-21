@@ -900,7 +900,14 @@ class ProviderController extends Controller
             return response()->json(response_formatter(DEFAULT_400, null, error_processor($validator)), 400);
         }
 
-        $subscribed = $this->subscribedService->where('provider_id', $request->user()->provider->id)
+        $provider = $request->user()->provider;
+        $subscribed = $this->subscribedService->where('provider_id', $provider->id)
+            // Serviceman assignment save validation is scoped to the provider's
+            // active zone. Keep the picker options on the same zone so it never
+            // offers a category that the save endpoint will reject.
+            ->when($provider->zone_id, function ($query) use ($provider) {
+                $query->where('zone_id', $provider->zone_id);
+            })
             ->with(['sub_category' => function ($query) {
                 return $query->withCount('services')->with(['services']);
             }])

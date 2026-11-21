@@ -413,8 +413,12 @@ class ServicemanController extends Controller
         $provider = $request->user()->provider;
         $assignedIds = SubscribedService::query()
             ->where('provider_id', $provider->id)
-            ->where('zone_id', $provider->zone_id)
+            ->when($provider->zone_id, function ($query) use ($provider) {
+                $query->where('zone_id', $provider->zone_id);
+            })
             ->where('is_subscribed', 1)
+            ->whereHas('category', fn ($query) => $query->where('is_active', 1))
+            ->whereHas('sub_category', fn ($query) => $query->where('is_active', 1))
             ->whereIn('sub_category_id', $subCategoryIds)
             ->pluck('sub_category_id')
             ->map(fn($id) => (string) $id)
