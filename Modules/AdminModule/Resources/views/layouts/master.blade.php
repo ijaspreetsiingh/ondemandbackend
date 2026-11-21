@@ -113,7 +113,7 @@
 <script src="{{ asset('public/assets/libs/intl-tel-input/js/intlTelInout-validation.js') }}"></script>
 
 <script src="{{ asset('public/assets/common/js/file-size-type-validation.js') }}"></script>
-<script src="{{ asset('public/assets/common/js/multiple-image-upload.js') }}"></script>
+<script src="{{ asset('public/assets/provider-module/js/multiple-image-upload.js') }}"></script>
 
 {!! Toastr::message() !!}
 

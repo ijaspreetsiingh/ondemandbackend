@@ -64,14 +64,29 @@ class FaceVerificationController extends Controller
         }
 
         $template = Crypt::encryptString(json_encode($result['embedding'], JSON_THROW_ON_ERROR));
-        if ($profile) {
-            $profile->update(['encrypted_template' => $template, 'enrolled_at' => now()]);
-        } else {
-            ServicemanFaceProfile::create([
-                'serviceman_id' => $serviceman->id,
-                'encrypted_template' => $template,
-                'enrolled_at' => now(),
-            ]);
+        $photoPath = $request->file('image')->store('face-enrollment', 'local');
+        try {
+            if ($profile) {
+                $oldPhotoPath = $profile->enrollment_photo_path;
+                $profile->update([
+                    'encrypted_template' => $template,
+                    'enrollment_photo_path' => $photoPath,
+                    'enrolled_at' => now(),
+                ]);
+                if ($oldPhotoPath && $oldPhotoPath !== $photoPath) {
+                    Storage::disk('local')->delete($oldPhotoPath);
+                }
+            } else {
+                ServicemanFaceProfile::create([
+                    'serviceman_id' => $serviceman->id,
+                    'encrypted_template' => $template,
+                    'enrollment_photo_path' => $photoPath,
+                    'enrolled_at' => now(),
+                ]);
+            }
+        } catch (\Throwable $exception) {
+            Storage::disk('local')->delete($photoPath);
+            throw $exception;
         }
 
         return response()->json(['response_code' => 'face_profile_saved_200', 'message' => 'Face setup complete.']);

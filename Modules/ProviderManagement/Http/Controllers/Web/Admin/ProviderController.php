@@ -948,7 +948,21 @@ class ProviderController extends Controller
 
         //overview
         if ($request->web_page == 'overview') {
-            $provider = $this->provider->with('owner.account')->withCount(['bookings'])->find($id);
+            $provider = $this->provider->with(['owner.account', 'zone', 'assignedMainCategory'])->withCount(['bookings'])->find($id);
+            if (!$provider) {
+                Toastr::error(translate('Provider_not_found'));
+                return back();
+            }
+
+            // Use the provider's stored zone directly. The subscribed_services relation
+            // can be scoped to the current admin zone and would hide assignments here.
+            $categoryAssignments = $this->subscribedService
+                ->where('provider_id', $provider->id)
+                ->where('zone_id', $provider->zone_id)
+                ->with(['category', 'sub_category'])
+                ->orderBy('category_id')
+                ->orderBy('assign_type')
+                ->get();
             $bookingOverview = DB::table('bookings')->where('provider_id', $id)
                 ->select('booking_status', DB::raw('count(*) as total'))
                 ->groupBy('booking_status')
@@ -964,7 +978,7 @@ class ProviderController extends Controller
                 }
             }
 
-            return view('providermanagement::admin.provider.detail.overview', compact('provider', 'webPage', 'total'));
+            return view('providermanagement::admin.provider.detail.overview', compact('provider', 'webPage', 'total', 'categoryAssignments'));
 
         } //subscribed_services
         elseif ($request->web_page == 'subscribed_services') {

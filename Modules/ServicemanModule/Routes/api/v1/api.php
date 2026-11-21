@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Modules\ServicemanModule\Http\Controllers\Api\V1\Serviceman\ConfigController as ServicemanConfigController;
 use Modules\ServicemanModule\Http\Controllers\Api\V1\Serviceman\PendingCollectionController as ServicemanPendingCollectionController;
 use Modules\ServicemanModule\Http\Controllers\Api\V1\Provider\ServicemanController as ServicemanProviderController;
+use Modules\BookingModule\Http\Controllers\Api\V1\Provider\ServicemanFaceProfileController;
 use Modules\ServicemanModule\Http\Controllers\Api\V1\Serviceman\ServicemanController;
 
 //provider routes
@@ -11,6 +12,8 @@ Route::group(['prefix' => 'partner', 'as' => 'provider', 'namespace' => 'Api\V1\
 
     //serviceman
     Route::group(['prefix' => 'technician', 'as' => 'serviceman.'], function () {
+        Route::get('{id}/face-profile', [ServicemanFaceProfileController::class, 'show']);
+        Route::delete('{id}/face-profile', [ServicemanFaceProfileController::class, 'destroy']);
         Route::get('/', [ServicemanProviderController::class, 'index']);
         Route::post('/', [ServicemanProviderController::class, 'store']);
         Route::get('{id}/revise', [ServicemanProviderController::class, 'edit']);
