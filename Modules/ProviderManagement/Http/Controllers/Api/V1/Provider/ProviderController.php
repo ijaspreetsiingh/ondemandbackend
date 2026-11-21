@@ -902,12 +902,9 @@ class ProviderController extends Controller
 
         $provider = $request->user()->provider;
         $subscribed = $this->subscribedService->where('provider_id', $provider->id)
-            // Serviceman assignment save validation is scoped to the provider's
-            // active zone. Keep the picker options on the same zone so it never
-            // offers a category that the save endpoint will reject.
-            ->when($provider->zone_id, function ($query) use ($provider) {
-                $query->where('zone_id', $provider->zone_id);
-            })
+            // Serviceman skills belong to the provider. Do not hide valid
+            // provider categories just because a subscription row belongs to
+            // another service zone; bookings still enforce their zone later.
             ->with(['sub_category' => function ($query) {
                 return $query->withCount('services')->with(['services']);
             }])

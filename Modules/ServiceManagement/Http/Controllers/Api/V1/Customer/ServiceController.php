@@ -108,9 +108,8 @@ class ServiceController extends Controller
             return response()->json(response_formatter(DEFAULT_400, null, error_processor($validator)), 400);
         }
 
-        $searchString = $request->input('string');
-        $decodedString = $searchString;
-        $keys = explode(' ', $decodedString);
+        $decodedString = trim((string) $request->input('string', ''));
+        $keys = array_values(array_unique(array_filter(preg_split('/\\s+/', $decodedString) ?: [])));
         $zoneId = Config::get('zone_id');
         $globalZoneId = global_zone_id();
 
@@ -132,9 +131,11 @@ class ServiceController extends Controller
             ->where(function ($query) use ($decodedString, $keys, $zoneId, $globalZoneId) {
                 $priceZoneIds = array_values(array_filter(array_unique([$zoneId, $globalZoneId])));
                 foreach ($keys as $key) {
+                    $query->where(function ($term) use ($key, $priceZoneIds) {
+                    $query = $term;
                     $query->orWhere('name', 'LIKE', '%' . $key . '%');
-                    $query->orWhere('short_description', 'LIKE', '%' . $decodedString . '%');
-                    $query->orWhere('description', 'LIKE', '%' . $decodedString . '%');
+                    $query->orWhere('short_description', 'LIKE', '%' . $key . '%');
+                    $query->orWhere('description', 'LIKE', '%' . $key . '%');
                     $query->orWhereHas('variations', function ($query) use ($key, $priceZoneIds) {
                         $query->withoutGlobalScope('zone_wise_data')
                             ->when(!empty($priceZoneIds), fn ($q) => $q->whereIn('zone_id', $priceZoneIds))
@@ -165,6 +166,7 @@ class ServiceController extends Controller
                                 $query->where('key', 'description')
                                     ->where('value', 'like', "%{$key}%");
                             });
+                    });
                     });
                 }
             })
@@ -306,9 +308,11 @@ class ServiceController extends Controller
 
     public function searchSuggestions(Request $request)
     {
-        $searchString = $request->input('string');
-        $decodedString = $searchString;
-        $searchWords = explode(' ', $decodedString);
+        $decodedString = trim((string) $request->input('string', ''));
+        if ($decodedString === '') {
+            return response()->json(response_formatter(DEFAULT_200, []), 200);
+        }
+        $searchWords = array_values(array_unique(array_filter(preg_split('/\s+/', $decodedString) ?: [])));
 
         $bindings = [
             $decodedString,
@@ -317,14 +321,15 @@ class ServiceController extends Controller
             "%$decodedString"
         ];
 
-        $searchQuery = $this->service
+        $searchQuery = $this->service->active()->visibleInCurrentZone()
             ->where(function ($query) use ($searchWords) {
-                $query->whereHas('category.zones', function ($q) {
-                    $q->where('zone_id', Config::get('zone_id'));
-                });
-
                 foreach ($searchWords as $word) {
-                    $query->orWhere('name', 'LIKE', "%$word%");
+                    $query->where(function ($term) use ($word) {
+                        $term->where('name', 'LIKE', "%$word%")
+                            ->orWhereHas('category', fn ($category) => $category->where('name', 'LIKE', "%$word%"))
+                            ->orWhereHas('subCategory', fn ($category) => $category->where('name', 'LIKE', "%$word%"))
+                            ->orWhereHas('tags', fn ($tag) => $tag->where('tag', 'LIKE', "%$word%"));
+                    });
                 }
             })
             ->orderByRaw("
@@ -337,46 +342,7 @@ class ServiceController extends Controller
                 END
             ", $bindings);
 
-        $servicesResult = $searchQuery->active()->visibleInCurrentZone()->take(100)->get();
-
-        $categoryServices = $this->service->withoutGlobalScopes()->with('category')
-            ->whereHas('category', function ($query) use ($decodedString) {
-                $query->where('name', 'LIKE', "%$decodedString%");
-            })
-            ->whereHas('category.zones', function ($query) {
-                $query->where('zone_id', Config::get('zone_id'));
-            })
-            ->visibleInCurrentZone()
-            ->take(100)
-            ->get();
-
-        $subCategoryServices = $this->service->withoutGlobalScopes()->with('subCategory')
-            ->whereHas('subCategory', function ($query) use ($decodedString) {
-                $query->where('name', 'LIKE', "%$decodedString%");
-            })
-            ->whereHas('category.zones', function ($query) {
-                $query->where('zone_id', Config::get('zone_id'));
-            })
-            ->visibleInCurrentZone()
-            ->take(100)
-            ->get();
-
-        $tagServices = $this->service->withoutGlobalScopes()
-            ->whereHas('tags', function ($query) use ($decodedString) {
-                $query->where('tag', 'LIKE', "%$decodedString%");
-            })
-            ->whereHas('category.zones', function ($query) {
-                $query->where('zone_id', Config::get('zone_id'));
-            })
-            ->visibleInCurrentZone()
-            ->take(100)
-            ->get();
-
-        $results = $servicesResult->pluck('name')
-            ->merge($categoryServices->pluck('name'))
-            ->merge($subCategoryServices->pluck('name'))
-            ->merge($tagServices->pluck('name'))
-            ->unique();
+        $results = $searchQuery->take(100)->get(['name'])->pluck('name')->unique();
 
         $authUser = auth('api')->user();
         // W4.25: N+1 fix — har keyword ke liye alag exists() query ki jagah ek query

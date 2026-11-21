@@ -405,27 +405,36 @@ class ServicemanController extends Controller
 
     private function validProviderSubCategories(Request $request, array $subCategoryIds): bool
     {
-        $subCategoryIds = array_values(array_unique(array_filter($subCategoryIds)));
+        $subCategoryIds = array_values(array_unique(array_filter(array_map(
+            fn ($id) => trim((string) $id),
+            $subCategoryIds
+        ), fn ($id) => $id !== '')));
         if (empty($subCategoryIds)) {
             return false;
         }
 
         $provider = $request->user()->provider;
+        if (!$provider) {
+            return false;
+        }
+
+        $requestedIds = array_map(fn ($id) => strtolower((string) $id), $subCategoryIds);
+        $requestedIds = array_values(array_unique(array_filter($requestedIds, fn ($id) => $id !== '')));
+
+        // Compare normalized IDs in PHP. LOWER(sub_category_id) in SQL can
+        // behave differently across MySQL collations/UUID storage formats.
+        // Use the same active subscriptions returned by enrolled/child-groups.
         $assignedIds = SubscribedService::query()
             ->where('provider_id', $provider->id)
-            ->when($provider->zone_id, function ($query) use ($provider) {
-                $query->where('zone_id', $provider->zone_id);
-            })
             ->where('is_subscribed', 1)
             ->whereHas('category', fn ($query) => $query->where('is_active', 1))
             ->whereHas('sub_category', fn ($query) => $query->where('is_active', 1))
-            ->whereIn('sub_category_id', $subCategoryIds)
             ->pluck('sub_category_id')
-            ->map(fn($id) => (string) $id)
+            ->map(fn ($id) => strtolower(trim((string) $id)))
             ->unique()
             ->values()
             ->all();
 
-        return count($assignedIds) === count($subCategoryIds);
+        return empty(array_diff($requestedIds, $assignedIds));
     }
 }
