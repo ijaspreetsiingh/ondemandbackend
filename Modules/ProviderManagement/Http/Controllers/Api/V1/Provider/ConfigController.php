@@ -182,12 +182,13 @@ class ConfigController extends Controller
             'provider_can_reply_review' => (int) business_config('provider_can_reply_review', 'provider_config')?->live_values,
             'app_environment' => env('APP_ENV'),
             'service_at_provider_place' => (int)((business_config('service_at_provider_place', 'provider_config'))->live_values ?? 0),
-            'business_pages' => BusinessPageSetting::where('is_active', 1)->orderByDesc('is_default')->orderBy('created_at', 'ASC')->get()->map(function ($page){
+            'business_pages' => BusinessPageSetting::where('is_active', 1)->whereIn('audience', ['all', 'provider'])->orderByDesc('is_default')->orderBy('created_at', 'ASC')->get()->map(function ($page){
                 return [
                     'page_key'        => $page->page_key,
                     'title'           => $page->title,
                     'is_default'      => $page->is_default,
-                    'image_full_path' => $page->image_full_path,
+                    'image_full_path' => $page->image ? $page->image_full_path : null,
+                    'audience'        => $page->audience,
                 ];
             }),
             'serviceman_can_cancel_booking' => (int)((business_config('serviceman_can_cancel_booking', 'serviceman_config'))->live_values ?? 0),
@@ -199,7 +200,10 @@ class ConfigController extends Controller
 
     public function pageDetails($key)
     {
-        $page = BusinessPageSetting::where('page_key', $key)->first();
+        $page = BusinessPageSetting::where('page_key', $key)->where('is_active', 1)->whereIn('audience', ['all', 'provider'])->first();
+        if ($page) {
+            $page->setAttribute('image_full_path', $page->image ? $page->image_full_path : null);
+        }
         return response()->json(response_formatter(DEFAULT_200, $page), 200);
     }
 

@@ -59,6 +59,15 @@
                                                         </div>
                                                     </div>
                                                 </div>
+                                                <div class="body-bg rounded p-20 mb-20">
+                                                    <label class="mb-2 text-dark">Show this page in</label>
+                                                    <select class="form-control" name="audience" required>
+                                                        <option value="all" @selected(($page->audience ?? 'all') === 'all')>All Apps</option>
+                                                        <option value="customer" @selected(($page->audience ?? 'all') === 'customer')>Customer App</option>
+                                                        <option value="provider" @selected(($page->audience ?? 'all') === 'provider')>Provider App</option>
+                                                        <option value="serviceman" @selected(($page->audience ?? 'all') === 'serviceman')>Service Man App</option>
+                                                    </select>
+                                                </div>
                                                 <div class="mb-20">
                                                     <h5 class="mb-10 fw-normal">{{ translate('Title Background Image') }}</h5>
                                                     <div class="body-bg rounded p-xl-4 p-3">
@@ -83,6 +92,12 @@
                                                             </div>
                                                             <div class="image-file-name d-none mt-2 text-center text-muted" style="font-size: 12px;"></div>
                                                         </div>
+                                                        @if($page->image)
+                                                            <label class="d-flex align-items-center gap-2 mt-3">
+                                                                <input type="checkbox" name="remove_image" value="1">
+                                                                <span>Remove this page image</span>
+                                                            </label>
+                                                        @endif
                                                         <p class="fz-10 text-center">
                                                             {{ translate('Image format')}} - {{ implode(', ', array_column(IMAGEEXTENSION, 'key')) }}
                                                             {{ translate("Image Size") }} - {{ translate('maximum size') }} {{ readableUploadMaxFileSize('image') }}

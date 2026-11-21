@@ -87,7 +87,29 @@ class ServicemanSelectionController extends Controller
                             $candidateProvider->id
                         )
                     );
-                    if ($servesAllServices) {
+                    if (!$servesAllServices) {
+                        continue;
+                    }
+
+                    // Do not stop at the first provider that has category
+                    // subscription rows: it may have no active, on-duty staff
+                    // assigned to these exact categories. Try the next
+                    // serviceable provider before returning an empty picker.
+                    $hasQualifiedServiceman = Serviceman::query()
+                        ->where('provider_id', $candidateProvider->id)
+                        ->where('is_on_duty', 1)
+                        ->whereHas('user', fn ($query) => $query->where('is_active', 1))
+                        ->where(function ($query) use ($requirements) {
+                            foreach ($requirements as $service) {
+                                $query->whereHas('servicemanCategories', function ($categoryQuery) use ($service) {
+                                    $categoryQuery->where('sub_category_id', $service['sub_category_id'])
+                                        ->where('category_id', $service['category_id']);
+                                });
+                            }
+                        })
+                        ->exists();
+
+                    if ($hasQualifiedServiceman) {
                         $providerId = $candidateProvider->id;
                         break;
                     }

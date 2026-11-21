@@ -52,8 +52,13 @@ class PageAndMediaController extends Controller
     {
         $this->authorize('page_view');
         $searchTerm = $request->input('search', '');
+        $audience = $request->input('audience', 'all');
+        if (!in_array($audience, ['all', 'customer', 'provider', 'serviceman'], true)) {
+            $audience = 'all';
+        }
 
         $pages = $this->businessPageSetting
+            ->when($audience !== 'all', fn ($query) => $query->whereIn('audience', ['all', $audience]))
             ->where(function($query) use ($searchTerm) {
                 $query->where('page_key', 'LIKE', "%{$searchTerm}%")
                     ->orWhere('title', 'LIKE', "%{$searchTerm}%");
@@ -63,7 +68,7 @@ class PageAndMediaController extends Controller
         $defaultPages = ['about-us', 'terms-and-conditions', 'cancellation-policy', 'privacy-policy', 'refund-policy'];
         $customPageCount = $this->businessPageSetting->whereNotIn('page_key', $defaultPages)->count();
 
-        return view('businesssettingsmodule::admin.page-settings.list', compact('pages', 'defaultPages', 'customPageCount'));
+        return view('businesssettingsmodule::admin.page-settings.list', compact('pages', 'defaultPages', 'customPageCount', 'audience'));
     }
 
     public function index()
@@ -84,6 +89,7 @@ class PageAndMediaController extends Controller
         $request->validate([
             'page_title.0' => 'required',
             'page_content.0' => 'required',
+            'audience' => 'required|in:all,customer,provider,serviceman',
             'image' =>'nullable|image|max:'. uploadMaxFileSizeInKB('image') .'|mimes:' . implode(',', array_column(IMAGEEXTENSION, 'key')),
         ], [
             'page_content.0.required' => 'The default content is required.',
@@ -113,6 +119,7 @@ class PageAndMediaController extends Controller
         $page->content = $request->page_content[array_search('default', $request->lang)];
         $page->is_active = $request->has('is_active') ? 1 : 0;
         $page->image = $image;
+        $page->audience = $request->input('audience', 'all');
         $page->save();
 
         foreach ($request->lang as $index => $locale) {
@@ -225,7 +232,9 @@ class PageAndMediaController extends Controller
                 }),
             ],
             'page_content.0' => 'required',
+            'audience' => 'required|in:all,customer,provider,serviceman',
             'image' =>'nullable|image|max:'. uploadMaxFileSizeInKB('image') .'|mimes:' . implode(',', array_column(IMAGEEXTENSION, 'key')),
+            'remove_image' => 'nullable|boolean',
         ], [
             'page_title.0.unique' => 'The default page title already exists.',
             'page_content.0.required' => 'The default content is required.',
@@ -243,7 +252,12 @@ class PageAndMediaController extends Controller
 
         $page->title = $defaultTitle;
         $page->content = $request->page_content[$defaultIndex];
+        $page->audience = $request->input('audience');
         $page->is_active = in_array($page->page_key, $defaultActivePages) ? 1 : ($request->has('is_active') ? 1 : 0);
+        if ($request->boolean('remove_image')) {
+            file_remover('page-setup/', $image);
+            $image = null;
+        }
         $page->image = $image;
         $page->save();
 

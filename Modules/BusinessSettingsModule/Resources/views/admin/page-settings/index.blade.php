@@ -42,6 +42,15 @@
                                                     </div>
                                                 </div>
                                             </div>
+                                            <div class="body-bg rounded p-20 mb-20">
+                                                <label class="mb-2 text-dark">Show this page in</label>
+                                                <select class="form-control" name="audience" required>
+                                                    <option value="all">All Apps</option>
+                                                    <option value="customer">Customer App</option>
+                                                    <option value="provider">Provider App</option>
+                                                    <option value="serviceman">Service Man App</option>
+                                                </select>
+                                            </div>
                                             <div class="mb-20">
                                                 <h5 class="mb-10 fw-normal">{{ translate('Title Background Image') }}</h5>
                                                 <div class="body-bg rounded p-xl-4 p-3">

@@ -111,12 +111,13 @@ class ConfigController extends Controller
             'firebase_otp_verification' => $firebaseOtpStatus,
             'forgot_password_verification_method' => $forgotPasswordVerificationMethod,
             'app_environment' => env('APP_ENV'),
-            'business_pages' => BusinessPageSetting::where('is_active', 1)->orderByDesc('is_default')->orderBy('created_at', 'ASC')->get()->map(function ($page){
+            'business_pages' => BusinessPageSetting::where('is_active', 1)->whereIn('audience', ['all', 'serviceman'])->orderByDesc('is_default')->orderBy('created_at', 'ASC')->get()->map(function ($page){
                 return [
                     'page_key'        => $page->page_key,
                     'title'           => $page->title,
                     'is_default'      => $page->is_default,
-                    'image_full_path' => $page->image_full_path,
+                    'image_full_path' => $page->image ? $page->image_full_path : null,
+                    'audience'        => $page->audience,
                 ];
             }),
             'max_image_upload_size' => uploadMaxFileSize('image'),
@@ -126,7 +127,10 @@ class ConfigController extends Controller
 
     public function pageDetails($key)
     {
-        $page = BusinessPageSetting::where('page_key', $key)->first();
+        $page = BusinessPageSetting::where('page_key', $key)->where('is_active', 1)->whereIn('audience', ['all', 'serviceman'])->first();
+        if ($page) {
+            $page->setAttribute('image_full_path', $page->image ? $page->image_full_path : null);
+        }
         return response()->json(response_formatter(DEFAULT_200, $page), 200);
     }
 

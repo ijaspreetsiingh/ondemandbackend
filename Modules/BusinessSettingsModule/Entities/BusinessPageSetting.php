@@ -22,6 +22,7 @@ class BusinessPageSetting extends Model
         'image',
         'is_active',
         'is_default',
+        'audience',
     ];
 
     protected $casts = [
@@ -44,20 +45,8 @@ class BusinessPageSetting extends Model
     public function getImageFullPathAttribute()
     {
         $image = $this->image;
-        $defaultPath = asset('public/assets/admin-module/img/media/default-page.png');
-
-        if (!$image) {
-            if (request()->is('api/*')) {
-                $defaultPath = asset('public/assets/admin-module/img/media/default-page.png');
-            }
-            return $defaultPath;
-        }
-
-        if ($image == 'def.png') {
-            if (request()->is('api/*')) {
-                $defaultPath = asset('public/assets/admin-module/img/media/default-page.png');
-            }
-            return $defaultPath;
+        if (!$image || $image === 'def.png') {
+            return null;
         }
 
         $s3Storage = $this->storage;
@@ -65,7 +54,7 @@ class BusinessPageSetting extends Model
         $path = 'page-setup/';
         $imagePath = $path . $image;
 
-        return getSingleImageFullPath(imagePath: $imagePath, s3Storage: $s3Storage, defaultPath: $defaultPath, page: true);
+        return getSingleImageFullPath(imagePath: $imagePath, s3Storage: $s3Storage, defaultPath: null, page: true);
     }
 
     public function getTitleAttribute($value){

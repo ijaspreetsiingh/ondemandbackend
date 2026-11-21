@@ -23,6 +23,11 @@
             </div>
             <div class="card mb-20">
                 <div class="card-body p-20">
+                    <ul class="nav nav-tabs mb-3">
+                        @foreach(['all' => 'All Apps', 'customer' => 'Customer App', 'provider' => 'Provider App', 'serviceman' => 'Service Man App'] as $key => $label)
+                            <li class="nav-item"><a class="nav-link {{ $audience === $key ? 'active' : '' }}" href="{{ route('admin.business-page-setup.list', ['audience' => $key]) }}">{{ $label }}</a></li>
+                        @endforeach
+                    </ul>
                     <div class="data-table-top mb-20 d-flex align-items-center flex-wrap gap-xl-3 gap-2 justify-content-between">
                         <div class="d-flex align-items-center flex-wrap gap-2">
                             <h4 class="fw-bold text-dark">{{ translate('Page List') }}</h4>
@@ -31,6 +36,7 @@
                         <div class="d-flex gap-md-3 gap-2 flex-wrap">
                             <form action="#" class="search-form search-form_style-two d-flex align-items-center gap-0 border rounded" method="GET">
                                 @csrf
+                                <input type="hidden" name="audience" value="{{ $audience }}">
                                 <div class="input-group search-form__input_group bg-transparent">
                                     <input type="search" class="theme-input-style search-form__input border-0  block-size-36" name="search"
                                            placeholder="{{translate('search_by_page_name')}}"
@@ -64,6 +70,7 @@
                             <tr>
                                 <th class="text-dark fw-medium bg-light">{{translate('Sl')}}</th>
                                 <th class="text-dark fw-medium bg-light">{{translate('Page Name')}}</th>
+                                <th class="text-dark fw-medium bg-light">App</th>
                                 @can('page_manage_status')
                                     <th class="text-dark fw-medium bg-light text-center">{{translate('Availability')}}</th>
                                 @endcan
@@ -75,6 +82,7 @@
                                 <tr>
                                     <td>{{ $pages->firstItem()+$key }}</td>
                                     <td class="text-capitalize">{{  $page->getRawOriginal('title') }}</td>
+                                    <td>{{ ['all' => 'All Apps', 'customer' => 'Customer App', 'provider' => 'Provider App', 'serviceman' => 'Service Man App'][$page->audience ?? 'all'] ?? 'All Apps' }}</td>
                                     @can('page_manage_status')
 
                                         <td class="text-end">
