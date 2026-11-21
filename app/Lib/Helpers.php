@@ -3545,6 +3545,22 @@ if (!function_exists('startProviderDecisionWindow')) {
     {
         $waitTime = max(30, (int) ($provider->auto_assign_wait_time ?: 120));
 
+        // A cart with several sub-categories is represented by sibling booking
+        // rows. Keep their provider decision window, but notify only once for
+        // the checkout group so the provider app does not open duplicate popups.
+        $sendProviderPopup = true;
+        if ($booking->assignment_group_id) {
+            $siblingIds = Booking::where('assignment_group_id', $booking->assignment_group_id)
+                ->where('provider_id', $provider->id)
+                ->where('customer_id', $booking->customer_id)
+                ->where('id', '!=', $booking->id)
+                ->pluck('id');
+            $sendProviderPopup = $siblingIds->isEmpty()
+                && !ProviderBookingTimer::where('booking_id', $booking->id)
+                    ->where('provider_id', $provider->id)
+                    ->exists();
+        }
+
         $booking->assignment_mode = 'provider_manual';
         $booking->auto_assigned = 1;
         $booking->auto_assign_expires_at = now()->addSeconds($waitTime);
@@ -3557,6 +3573,9 @@ if (!function_exists('startProviderDecisionWindow')) {
 
         // Provider ko notification bhejo (app side me full-screen popup khulta hai)
         // Notification message: "AI-assigned booking - nearest service man available"
+        if (!$sendProviderPopup) {
+            return;
+        }
         try {
             $fcmToken = $provider?->owner?->fcm_token ?? null;
             $languageKey = $provider?->owner?->current_language_key;
@@ -3638,11 +3657,8 @@ if (!function_exists('dispatchNearestServicemanRequest')) {
             // add ho chuka hai aur neeche normal nearest flow age badhega.
             $allowAnyCategory = (bool) $provider->auto_assign_any_category;
             $preferredId = $booking->preferred_serviceman_id ?? null;
+            $bookingSubCategoryIds = getBookingAssignmentSubcategoryIds($booking);
             if ($preferredId && !in_array($preferredId, $alreadyTried, true)) {
-                $bookingSubCategoryId = $booking->sub_category_id
-                    ?? $booking->detail?->first()?->service?->sub_category_id
-                    ?? null;
-
                 $preferredQuery = Serviceman::with('user:id,fcm_token,current_language_key')
                     ->where('id', $preferredId)
                     ->where('provider_id', $booking->provider_id)
@@ -3650,7 +3666,7 @@ if (!function_exists('dispatchNearestServicemanRequest')) {
                         $query->where('is_active', 1);
                     })->where('is_on_duty', 1);
                 if (!$allowAnyCategory) {
-                    $preferredQuery->whereHas('servicemanCategories', fn($query) => $query->where('sub_category_id', $bookingSubCategoryId));
+                    $preferredQuery->whereHas('servicemanCategories', fn($query) => $query->whereIn('sub_category_id', $bookingSubCategoryIds));
                 }
                 $preferred = $preferredQuery->first();
                 if ($preferred) {
@@ -4002,7 +4018,8 @@ if (!function_exists('processExpiredAutoAssign')) {
 
 if (!function_exists('findNearestServicemen')) {
     /**
-     * Provider ke servicemen — customer location se DISTANCE ke hisab sort.
+     * Provider ke servicemen — pehle booking group me matching sub-categories,
+     * phir customer location se distance ke hisab sort.
      *  - live location (users.current_lat/lng) recent (7 din) ho to distance-wise
      *  - location na ho / stale ho -> list ke end me
      *  - already tried (rejected/expired/assigned) exclude
@@ -4011,22 +4028,25 @@ if (!function_exists('findNearestServicemen')) {
     function findNearestServicemen($booking, $providerId, array $excludeServicemanIds = [], bool $allowAnyCategory = false)
     {
         [$bookingLat, $bookingLng] = getBookingCoordinates($booking);
+        $bookingSubCategoryIds = getBookingAssignmentSubcategoryIds($booking);
 
-        // Booking ka sub_category_id nikalo — isi se serviceman filter hoga
-        $bookingSubCategoryId = $booking->sub_category_id
-            ?? $booking->detail?->first()?->service?->sub_category_id
-            ?? null;
-
-        $baseQuery = function () use ($providerId, $excludeServicemanIds, $bookingSubCategoryId, $allowAnyCategory) {
+        $baseQuery = function () use ($providerId, $excludeServicemanIds, $bookingSubCategoryIds, $allowAnyCategory) {
             $query = Serviceman::where('provider_id', $providerId)
                 ->where('is_on_duty', 1)
                 ->whereNotIn('id', $excludeServicemanIds)
                 ->whereHas('user', function ($query) {
                     $query->where('is_active', 1);
                 })
-                ->with('user:id,fcm_token,current_language_key,first_name,last_name,profile_image,current_lat,current_lng,last_location_updated_at');
+                ->with([
+                    'user:id,fcm_token,current_language_key,first_name,last_name,profile_image,current_lat,current_lng,last_location_updated_at',
+                    'servicemanCategories:id,serviceman_id,sub_category_id',
+                ]);
             if (!$allowAnyCategory) {
-                $query->whereHas('servicemanCategories', fn($categoryQuery) => $categoryQuery->where('sub_category_id', $bookingSubCategoryId));
+                if (empty($bookingSubCategoryIds)) {
+                    $query->whereRaw('1 = 0');
+                } else {
+                    $query->whereHas('servicemanCategories', fn($categoryQuery) => $categoryQuery->whereIn('sub_category_id', $bookingSubCategoryIds));
+                }
             }
             return $query;
         };
@@ -4057,7 +4077,7 @@ if (!function_exists('findNearestServicemen')) {
         }
 
         return $servicemen
-            ->map(function ($serviceman) use ($bookingLat, $bookingLng) {
+            ->map(function ($serviceman) use ($bookingLat, $bookingLng, $bookingSubCategoryIds) {
                 $lat = $serviceman->user?->current_lat;
                 $lng = $serviceman->user?->current_lng;
 
@@ -4071,12 +4091,57 @@ if (!function_exists('findNearestServicemen')) {
                     ? calculateDistance($bookingLat, $bookingLng, (float) $lat, (float) $lng)
                     : null;
 
+                $serviceman->matched_subcategory_count = $serviceman->servicemanCategories
+                    ->pluck('sub_category_id')
+                    ->filter(fn($subCategoryId) => in_array((string) $subCategoryId, $bookingSubCategoryIds, true))
+                    ->unique()
+                    ->count();
+
                 return $serviceman;
             })
-            ->sortBy(function ($serviceman) {
-                return $serviceman->distance_km ?? PHP_FLOAT_MAX;
+            ->sort(function ($a, $b) {
+                $matchOrder = $b->matched_subcategory_count <=> $a->matched_subcategory_count;
+                if ($matchOrder !== 0) {
+                    return $matchOrder;
+                }
+
+                return ($a->distance_km ?? PHP_FLOAT_MAX) <=> ($b->distance_km ?? PHP_FLOAT_MAX);
             })
             ->values();
+    }
+}
+
+if (!function_exists('getBookingAssignmentSubcategoryIds')) {
+    /**
+     * Checkout multi-subcategory services ko alag booking rows me store karta hai.
+     * Ek checkout group ke tamam unique sub-category ids nikaal kar har sibling
+     * booking par wohi match-set use karo. Purani/group-less bookings apni hi id leti hain.
+     */
+    function getBookingAssignmentSubcategoryIds($booking): array
+    {
+        $bookingIds = collect([$booking->id])->filter();
+        $groupId = $booking->assignment_group_id ?? null;
+
+        if ($groupId) {
+            $bookingIds = Booking::where('assignment_group_id', $groupId)
+                ->where('provider_id', $booking->provider_id)
+                ->where('customer_id', $booking->customer_id)
+                ->pluck('id');
+        }
+
+        $subCategoryIds = DB::table('booking_details')
+            ->join('services', 'services.id', '=', 'booking_details.service_id')
+            ->whereIn('booking_details.booking_id', $bookingIds)
+            ->whereNotNull('services.sub_category_id')
+            ->pluck('services.sub_category_id')
+            ->map(fn($id) => (string) $id)
+            ->all();
+
+        if (empty($subCategoryIds) && !empty($booking->sub_category_id)) {
+            $subCategoryIds[] = (string) $booking->sub_category_id;
+        }
+
+        return array_values(array_unique($subCategoryIds));
     }
 }
 

@@ -95,7 +95,8 @@ class Booking extends Model
         'start_otp_generated_at',
         'serviceman_reached_at',
         'is_re_service',
-        're_service_of'
+        're_service_of',
+        'assignment_group_id',
     ];
 
     protected $appends = ['evidence_photos_full_path', 'extra_fee_label', 'platform_fee_label'];

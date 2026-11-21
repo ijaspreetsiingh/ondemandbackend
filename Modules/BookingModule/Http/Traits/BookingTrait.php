@@ -167,12 +167,13 @@ trait BookingTrait
 
         $loginToken = null;
         $bookingIds = [];
+        $assignmentGroupId = (string) \Illuminate\Support\Str::uuid();
 
         foreach ($cartData->pluck('sub_category_id')->unique() as $subCategory) {
 
             $booking = new Booking();
 
-            DB::transaction(function () use ($subCategory, $booking, $transactionId, $request, $cartData, $isGuest, $isPartials, $customerWalletBalance,
+            DB::transaction(function () use ($subCategory, $booking, $assignmentGroupId, $transactionId, $request, $cartData, $isGuest, $isPartials, $customerWalletBalance,
                 &$userId, // Pass by reference
                 &$loginToken, // Pass by reference,
                 $newUserInfo) {
@@ -210,6 +211,7 @@ trait BookingTrait
                 $totalBookingAmount += $extraFee + $platformFee;
 
                 $booking->customer_id = $userId;
+                $booking->assignment_group_id = $assignmentGroupId;
                 $booking->provider_id = $cartData->first()->provider_id;
                 $booking->category_id = $cartData->first()->category_id;
                 $booking->sub_category_id = $subCategory;
