@@ -10,9 +10,7 @@ use Illuminate\Support\Facades\Validator;
 use Modules\BookingModule\Entities\Booking;
 use Modules\BookingModule\Entities\BookingServiceman;
 use Modules\UserManagement\Entities\Serviceman;
-use Modules\UserManagement\Entities\User;
 use Modules\ProviderManagement\Entities\Provider;
-use Modules\ProviderManagement\Entities\SubscribedService;
 use Modules\CategoryManagement\Entities\Category;
 
 class ServicemanSelectionController extends Controller
@@ -32,8 +30,12 @@ class ServicemanSelectionController extends Controller
         $validator = Validator::make($request->all(), [
             'zone_id' => 'required|uuid',
             'provider_id' => 'nullable|string|max:36',
-            'category_id' => 'required|string|max:36',
-            'sub_category_id' => 'required|string|max:36',
+            'category_id' => 'required_without:services|string|max:36',
+            'sub_category_id' => 'required_without:services|string|max:36',
+            'services' => 'sometimes|array|min:1|max:100',
+            'services.*.category_id' => 'required_with:services|string|max:36',
+            'services.*.sub_category_id' => 'required_with:services|string|max:36',
+            'services.*.provider_id' => 'nullable|string|max:36',
             'customer_lat' => 'nullable|numeric',
             'customer_lon' => 'nullable|numeric',
         ]);
@@ -45,35 +47,48 @@ class ServicemanSelectionController extends Controller
         try {
             $zoneId = $request['zone_id'];
             $providerId = $request['provider_id'] ?? null;
-            $categoryId = $request['category_id'];
-            $subCategoryId = $request['sub_category_id'];
+            $requirements = collect($request->input('services', [[
+                'category_id' => $request->input('category_id'),
+                'sub_category_id' => $request->input('sub_category_id'),
+                'provider_id' => $providerId,
+            ]]))
+                ->map(fn ($service) => [
+                    'category_id' => (string) ($service['category_id'] ?? ''),
+                    'sub_category_id' => (string) ($service['sub_category_id'] ?? ''),
+                    'provider_id' => $service['provider_id'] ?? null,
+                ])
+                ->filter(fn ($service) => $service['category_id'] !== '' && $service['sub_category_id'] !== '')
+                ->unique(fn ($service) => $service['category_id'] . ':' . $service['sub_category_id'])
+                ->values();
+            $serviceProviderIds = $requirements->pluck('provider_id')->filter()->unique()->values();
+            if ($serviceProviderIds->count() > 1) {
+                return response()->json(response_formatter(DEFAULT_200, [], 'Choose a single provider to select one serviceman for all services'), 200);
+            }
+            $providerId = $providerId ?: $serviceProviderIds->first();
             $customerLat = $request['customer_lat'];
             $customerLon = $request['customer_lon'];
 
-            // Category bookings can have no provider_id in the cart. Resolve
-            // the assigned provider from this zone/category in that case.
+            // Cart items may not carry provider_id yet. Resolve a provider that
+            // serves every requested sub-category, rather than only the first.
             if (empty($providerId)) {
-                $candidateProviderIds = SubscribedService::query()
-                    ->where('is_subscribed', 1)
-                    ->where(function ($query) use ($subCategoryId, $categoryId) {
-                        $query->where('sub_category_id', $subCategoryId)
-                            ->orWhere(function ($categoryQuery) use ($categoryId) {
-                                $categoryQuery->where('category_id', $categoryId)
-                                    ->where('assign_type', 'complete');
-                            });
-                    })
-                    ->whereHas('provider', function ($query) use ($zoneId) {
-                        $query->where('zone_id', $zoneId)
-                            ->where('is_active', 1)
-                            ->where('is_approved', 1)
-                            ->where('is_suspended', 0);
-                    })
-                    ->pluck('provider_id')
-                    ->unique();
+                $candidateProviders = Provider::query()
+                    ->where('zone_id', $zoneId)
+                    ->where('is_active', 1)
+                    ->where('is_approved', 1)
+                    ->where('is_suspended', 0)
+                    ->get();
 
-                foreach ($candidateProviderIds as $candidateId) {
-                    if (subcategory_has_serviceable_provider($subCategoryId, $categoryId, $zoneId, $candidateId)) {
-                        $providerId = $candidateId;
+                foreach ($candidateProviders as $candidateProvider) {
+                    $servesAllServices = $requirements->every(fn ($service) =>
+                        subcategory_has_serviceable_provider(
+                            $service['sub_category_id'],
+                            $service['category_id'],
+                            $zoneId,
+                            $candidateProvider->id
+                        )
+                    );
+                    if ($servesAllServices) {
+                        $providerId = $candidateProvider->id;
                         break;
                     }
                 }
@@ -90,29 +105,40 @@ class ServicemanSelectionController extends Controller
 
             // A manually selected serviceman must belong to the provider that
             // actually serves this sub-category in the selected zone.
-            $subCategory = Category::find($subCategoryId);
-            if (!$subCategory || $subCategory->parent_id !== $categoryId) {
-                return response()->json(response_formatter(DEFAULT_400, null, ['error' => 'Category does not match sub-category']), 400);
+            foreach ($requirements as $service) {
+                $subCategory = Category::find($service['sub_category_id']);
+                if (!$subCategory || (string) $subCategory->parent_id !== $service['category_id']) {
+                    return response()->json(response_formatter(DEFAULT_400, null, ['error' => 'Category does not match sub-category']), 400);
+                }
             }
 
             if ((string) $provider->zone_id !== (string) $zoneId ||
-                !subcategory_has_serviceable_provider($subCategoryId, $categoryId, $zoneId, $providerId)) {
+                !$requirements->every(fn ($service) => subcategory_has_serviceable_provider(
+                    $service['sub_category_id'],
+                    $service['category_id'],
+                    $zoneId,
+                    $providerId
+                ))) {
                 return response()->json(response_formatter(DEFAULT_200, [], 'No servicemen available for this service'), 200);
             }
 
             // Offer only servicemen who can receive an assignment right now.
             // CATEGORY FILTER: Serviceman must have this sub_category assigned
-            $servicemen = Serviceman::with(['user:id,first_name,last_name,profile_image'])
+            $servicemenQuery = Serviceman::with(['user:id,first_name,last_name,profile_image,latitude,longitude'])
                 ->where('provider_id', $providerId)
                 ->where('is_on_duty', 1)
-                ->whereHas('user', fn($q) => $q->where('is_active', 1))
-                // Only staff explicitly assigned to this provider category's
-                // sub-category can be offered for the booking.
-                ->whereHas('servicemanCategories', function ($q) use ($subCategoryId, $categoryId) {
-                    $q->where('sub_category_id', $subCategoryId)
-                      ->where('category_id', $categoryId);
-                })
-                ->get();
+                ->whereHas('user', fn($q) => $q->where('is_active', 1));
+
+            // One selected serviceman must be assigned to every distinct
+            // service category in the cart, or some bookings would be left
+            // without the customer's chosen person.
+            foreach ($requirements as $service) {
+                $servicemenQuery->whereHas('servicemanCategories', function ($q) use ($service) {
+                    $q->where('sub_category_id', $service['sub_category_id'])
+                      ->where('category_id', $service['category_id']);
+                });
+            }
+            $servicemen = $servicemenQuery->get();
 
             if ($servicemen->isEmpty()) {
                 return response()->json(response_formatter(DEFAULT_200, [], 'No servicemen available for this service'), 200);
