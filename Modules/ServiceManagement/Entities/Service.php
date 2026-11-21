@@ -392,12 +392,18 @@ class Service extends Model
     public static function generateUniqueSlug($name, $ignoreId = null)
     {
         $slug = Str::slug($name);
+        if ($slug === '') {
+            $slug = 'service';
+        }
         $original = $slug;
         $count = 1;
 
         while (
-        static::where('slug', $slug)
-            ->when($ignoreId, fn ($q) => $q->where('id', '!=', $ignoreId))
+        // The database unique index covers every row, including soft-deleted
+        // services and rows hidden by request-specific global scopes.
+        static::withoutGlobalScopes()
+            ->where('slug', $slug)
+            ->when($ignoreId !== null, fn ($q) => $q->where('id', '!=', $ignoreId))
             ->exists()
         ) {
             $slug = $original . '-' . $count++;
