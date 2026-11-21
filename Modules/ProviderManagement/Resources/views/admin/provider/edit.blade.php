@@ -794,7 +794,10 @@
                             </div>
 
                             @php
-                                $assignedRows = $provider->subscribed_services()->where('zone_id', $provider->zone_id)->get();
+                                // Use all stored rows for this provider and zone. The
+                                // subscribed_services relation hides inactive rows and
+                                // may also be scoped to the admin's current zone.
+                                $assignedRows = $assignedCategoryRows;
 
                                 $oldComplete = old('complete_main_category_ids');
                                 $prefillComplete = is_array($oldComplete)

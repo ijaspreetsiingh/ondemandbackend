@@ -1213,7 +1213,12 @@ class ProviderController extends Controller
         $this->authorize('provider_update');
 
         $zones = $this->zone->ofStatus(1)->get();
-        $provider = $this->provider->with(['owner', 'zone', 'assignedMainCategory'])->find($id);
+        $provider = $this->provider->with(['owner', 'zone', 'assignedMainCategory'])->findOrFail($id);
+        $assignedCategoryRows = $this->subscribedService
+            ->where('provider_id', $provider->id)
+            ->where('zone_id', $provider->zone_id)
+            ->with(['category', 'sub_category'])
+            ->get();
         $commission = (int)((business_config('provider_commision', 'provider_config'))->live_values ?? null);
         $subscription = (int)((business_config('provider_subscription', 'provider_config'))->live_values ?? null);
         $duration = (int)((business_config('free_trial_period', 'subscription_Setting'))->live_values ?? null);
@@ -1228,7 +1233,7 @@ class ProviderController extends Controller
         $mainCategories = $this->category->ofType('main')->ofStatus(1)->get();
         $subCategories = $this->category->ofType('sub')->ofStatus(1)->get();
 
-        return view('providermanagement::admin.provider.edit', compact('provider', 'zones', 'commission','subscription','formattedPackages', 'duration', 'freeTrialStatus', 'packageSubscription', 'mainCategories', 'subCategories'));
+        return view('providermanagement::admin.provider.edit', compact('provider', 'zones', 'commission','subscription','formattedPackages', 'duration', 'freeTrialStatus', 'packageSubscription', 'mainCategories', 'subCategories', 'assignedCategoryRows'));
     }
 
 
