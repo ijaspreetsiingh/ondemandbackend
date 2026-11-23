@@ -19,6 +19,7 @@ use Illuminate\Validation\ValidationException;
 use Modules\AI\app\Models\AISetting;
 use Modules\BusinessSettingsModule\Emails\TestMailSender;
 use Modules\BusinessSettingsModule\Entities\BusinessSettings;
+use Modules\BusinessSettingsModule\Entities\LoginSetup;
 use Modules\BusinessSettingsModule\Entities\NotificationSetup;
 use Modules\BusinessSettingsModule\Entities\Translation;
 use Modules\BusinessSettingsModule\Http\Requests\ThirdPartyDataStoreOrUpdateRequest;
@@ -908,15 +909,20 @@ class ConfigurationController extends Controller
     public function emailStatusUpdate(Request $request)
     {
         $this->authorize('configuration_update');
+        $status = (int) $request->input('value', 0);
 
         $this->businessSetting->updateOrCreate(['key_name' => 'email_config_status', 'settings_type' => 'email_config'], [
             'key_name' => 'email_config_status',
-            'live_values' => (int)$request['value'],
-            'test_values' => (int)$request['value'],
+            'live_values' => $status,
+            'test_values' => $status,
             'settings_type' => 'email_config',
             'mode' => 'live',
             'is_active' => 1,
         ]);
+
+        if ($status === 0) {
+            LoginSetup::where('key', 'email_verification')->update(['value' => 0]);
+        }
 
         return response()->json(response_formatter(DEFAULT_UPDATE_200), 200);
     }
@@ -1285,10 +1291,11 @@ class ConfigurationController extends Controller
 
         if ($data['party_name'] == 'email_config')
         {
+            $emailEnabled = (int) ($data['status'] ?? 0);
 
             $processedData = [];
             $processedData[] = array_merge(Arr::except($data, 'status'), ['party_name' => 'email_config']);
-            $processedData[] = $data['status'] ?? 1;
+            $processedData[] = $emailEnabled;
             foreach ($processedData as $configData)
             {
                 $this->businessSetting->updateOrCreate(
@@ -1302,6 +1309,10 @@ class ConfigurationController extends Controller
                         'is_active' => $configData['status'] ?? 1,
                     ]
                 );
+            }
+
+            if ($emailEnabled === 0) {
+                LoginSetup::where('key', 'email_verification')->update(['value' => 0]);
             }
 
             //update setup guideline data

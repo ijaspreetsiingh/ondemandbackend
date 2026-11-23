@@ -1290,6 +1290,7 @@ class ProviderController extends Controller
             'extra_charge_owners' => 'nullable|array',
             'extra_charge_owners.*' => 'nullable|in:admin,provider,serviceman,final_amount',
             'calling_enabled' => 'nullable|in:0,1',
+            'admin_otp_verified' => 'nullable|in:0,1',
             'allowed_payment_methods' => 'nullable|array',
             'allowed_payment_methods.*' => 'string|max:191',
 
@@ -1366,6 +1367,7 @@ class ProviderController extends Controller
         $provider->booking_fee_label = $request->filled('booking_fee_label') ? $request->input('booking_fee_label') : null;
         $provider->extra_charge_owners = $this->normalizeExtraChargeOwners($request, $provider);
         $provider->calling_enabled = $request->has('calling_enabled') ? 1 : 0;
+        $provider->admin_otp_verified = $request->boolean('admin_otp_verified');
         $provider->allowed_payment_methods = json_encode(array_values(array_filter((array) $request->input('allowed_payment_methods', []))));
         // Step 6: Service Permission (checkbox present = on, missing = off)
         $provider->allow_service_create = $request->has('allow_service_create') ? 1 : 0;
@@ -1380,6 +1382,12 @@ class ProviderController extends Controller
         $owner = $provider->owner()->first();
         $owner->identification_number = $request->identity_number;
         $owner->identification_type = $request->identity_type;
+        if ($provider->admin_otp_verified) {
+            $owner->is_phone_verified = 1;
+            $owner->is_email_verified = 1;
+            $owner->phone_verified_at = $owner->phone_verified_at ?? now();
+            $owner->email_verified_at = $owner->email_verified_at ?? now();
+        }
         if (count($identityImages) > 0) {
             $owner->identification_image = $identityImages;
         }

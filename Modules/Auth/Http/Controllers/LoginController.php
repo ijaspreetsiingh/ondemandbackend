@@ -191,14 +191,14 @@ class LoginController extends Controller
         }
 
         $phone_verification = login_setup('phone_verification')?->value ?? 0;
-        if ($phone_verification && !$user->is_phone_verified) {
+        if (!$user->provider->admin_otp_verified && $phone_verification && !$user->is_phone_verified) {
             self::update_user_hit_count($user);
             Toastr::error(translate('Verify your account'));
             return view('auth::verification.send-otp', compact('user'));
         }
 
         $email_verification = login_setup('email_verification')?->value ?? 0;
-        if ($email_verification && !$user->is_email_verified) {
+        if (!$user->provider->admin_otp_verified && $email_verification && !$user->is_email_verified) {
             self::update_user_hit_count($user);
             Toastr::error(translate('Verify your account'));
             return view('auth::verification.send-otp', compact('user'));

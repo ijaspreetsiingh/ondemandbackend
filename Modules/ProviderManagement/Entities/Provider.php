@@ -48,6 +48,7 @@ class Provider extends Model
         'auto_assign_mode' => 'integer',
         'auto_assign_wait_time' => 'integer',
         'auto_assign_any_category' => 'boolean',
+        'admin_otp_verified' => 'boolean',
         'auto_reassign_on_cancel' => 'integer',
         'coordinates' => 'json',
         'category_assignment_mode' => 'integer'

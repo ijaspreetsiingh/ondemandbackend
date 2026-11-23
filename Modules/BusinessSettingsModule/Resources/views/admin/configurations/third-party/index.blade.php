@@ -278,12 +278,9 @@
         });
 
         let emailVerificationStatus = {{ (int)((login_setup('email_verification'))->value ?? 0) }}
-        $(document).on('click', '.change-smtp-mail-status', function (e) {
-            let status = $(this).prop('checked') ? 0 : 1;
-            if (status === 1 && emailVerificationStatus === 1) {
-                toastr.error('{{ translate('You can not turn off the email configuration status since the Email verification status is active in login setup') }}');
-                e.preventDefault();
-                return false;
+        $(document).on('change', '.change-smtp-mail-status', function () {
+            if (!$(this).prop('checked') && emailVerificationStatus === 1) {
+                toastr.info('Email verification will also be turned off when you save these settings.');
             }
         });
 

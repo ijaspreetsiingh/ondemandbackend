@@ -103,21 +103,22 @@ class LoginController extends Controller
             $user->save();
         }
 
-        $phoneVerification = checkActiveSMSGatewayCount();
-        if ($type == 'phone' && $phoneVerification && !$user->is_phone_verified) {
-            self::updateUserHitCount($user);
-            return response()->json(response_formatter(UNVERIFIED_PHONE), 401);
-        }
-
-        $emailVerification = login_setup('email_verification')?->value ?? 0;
-        if ($type == 'email' && $emailVerification && !$user->is_email_verified) {
-            self::updateUserHitCount($user);
-            return response()->json(response_formatter(UNVERIFIED_EMAIL), 401);
-        }
-
         if (!Hash::check($request['password'], $user['password'])) {
             self::updateUserHitCount($user);
             return response()->json(response_formatter(AUTH_LOGIN_401), 401);
+        }
+
+        // Provider first-login verification is always delivered through the configured email.
+        // The admin override marks this provider manually verified and skips that first check.
+        if (!$user->provider->admin_otp_verified) {
+            $emailStatus = business_config('email_config_status', 'email_config')?->live_values ?? 0;
+            if ($emailStatus && !$user->is_email_verified) {
+                self::updateUserHitCount($user);
+                return response()->json(response_formatter(UNVERIFIED_EMAIL, [
+                    'identity' => $user->email,
+                    'identity_type' => 'email',
+                ]), 401);
+            }
         }
 
         if ($user->provider->is_approved == '2') {

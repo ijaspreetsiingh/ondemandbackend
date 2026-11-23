@@ -1290,6 +1290,26 @@
                         </div>
                     </div>
                 </section>
+                <h3 class="flat-section-title">{{translate('OTP Verification')}}</h3>
+                <section id="provider-otp-verification">
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start gap-3">
+                                <div>
+                                    <h4 class="c1 mb-2">{{translate('Manually verify provider OTP')}}</h4>
+                                    <p class="mb-0 opacity-75 fs-12">
+                                        {{translate('Enable this only after confirming the provider identity. This marks the provider phone and email as manually verified, so the first app sign-in will not require OTP. Other providers still follow the global OTP settings.')}}
+                                    </p>
+                                </div>
+                                <label class="switcher flex-shrink-0">
+                                    <input type="checkbox" name="admin_otp_verified" value="1"
+                                           {{$provider->admin_otp_verified ? 'checked' : ''}}>
+                                    <span class="switcher_control"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </section>
                 <button type="submit" class="btn btn--primary btn-float-save">
                     <span class="material-icons" style="font-size:18px">save</span>
                     {{translate('save_changes')}}
