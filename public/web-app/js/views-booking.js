@@ -828,9 +828,17 @@ window.Views = window.Views || {};
     const provider = b.provider;
     const serviceman = b.serviceman;
     const providerUser = provider && provider.owner ? provider.owner : (provider && provider.user);
+    /* Provider row me phone `contact_person_phone` / `company_phone` hota hai; owner user
+       relation booking API me load nahi hota, isliye dono field naam support karte hain. */
+    const providerPhone = provider && (provider.contact_person_phone || provider.contact_person_number || provider.company_phone || (providerUser && providerUser.phone));
+    const servicemanPhone = serviceman && serviceman.user && serviceman.user.phone;
+    const telHref = (number) => 'tel:' + String(number).replace(/[^\d+]/g, '');
+    /* Chat ke liye pehla UUID-shaped id chuno (user id → provider/serviceman id). */
+    const isUuid = (v) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
+    const chatTarget = (...ids) => ids.find(isUuid) || ids.find(Boolean) || '';
     const canCancel = statusKey === 'pending';
     const canReview = statusKey === 'completed';
-    const canChat = provider && (providerUser || provider.user_id);
+    const canChat = provider && (providerUser || provider.user_id || provider.id);
 
     const timeline = buildTimeline(b);
 
@@ -924,7 +932,7 @@ window.Views = window.Views || {};
               </div>
               <div class="procard__actions">
                 ${canChat ? `<button class="btn btn--ghost btn--sm" id="chat-pro">${U.icon('chat', 15)} Message</button>` : ''}
-                ${provider.contact_person_number || (providerUser && providerUser.phone) ? `<a class="btn btn--ghost btn--sm" href="tel:${U.esc(provider.contact_person_number || (providerUser && providerUser.phone))}">${U.icon('phone', 15)} Call</a>` : ''}
+                ${providerPhone ? `<a class="btn btn--ghost btn--sm" href="${telHref(providerPhone)}">${U.icon('phone', 15)} Call</a>` : ''}
               </div>
             </div>` : ''}
 
@@ -938,8 +946,8 @@ window.Views = window.Views || {};
                 </div>
               </div>
               <div class="procard__actions">
-                ${serviceman.user && serviceman.user.id ? `<button class="btn btn--ghost btn--sm" id="chat-sm">${U.icon('chat', 15)} Message</button>` : ''}
-                ${serviceman.user && serviceman.user.phone ? `<a class="btn btn--ghost btn--sm" href="tel:${U.esc(serviceman.user.phone)}">${U.icon('phone', 15)} Call</a>` : ''}
+                ${serviceman && (serviceman.user || serviceman.user_id) ? `<button class="btn btn--ghost btn--sm" id="chat-sm">${U.icon('chat', 15)} Message</button>` : ''}
+                ${servicemanPhone ? `<a class="btn btn--ghost btn--sm" href="${telHref(servicemanPhone)}">${U.icon('phone', 15)} Call</a>` : ''}
               </div>
             </div>` : ''}
 
@@ -970,7 +978,7 @@ window.Views = window.Views || {};
     const chatBtn = view.querySelector('#chat-pro');
     if (chatBtn) {
       chatBtn.onclick = async () => {
-        const toUser = (providerUser && providerUser.id) || (provider && provider.user_id);
+        const toUser = chatTarget(providerUser && providerUser.id, provider.user_id, provider.id);
         if (!toUser) { U.toast('Messaging is not available for this booking', 'error'); return; }
         chatBtn.disabled = true;
         try {
@@ -986,7 +994,7 @@ window.Views = window.Views || {};
     const smChatBtn = view.querySelector('#chat-sm');
     if (smChatBtn) {
       const smUser = serviceman && serviceman.user;
-      const toUser = smUser && smUser.id;
+      const toUser = chatTarget(smUser && smUser.id, serviceman && serviceman.user_id, serviceman && serviceman.id);
       smChatBtn.onclick = async () => {
         if (!toUser) { U.toast('Messaging is not available for this technician', 'error'); return; }
         smChatBtn.disabled = true;

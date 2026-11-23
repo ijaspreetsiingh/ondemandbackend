@@ -12,6 +12,9 @@ use Modules\ChattingModule\Entities\ChannelList;
 use Modules\ChattingModule\Entities\ChannelUser;
 use Modules\ChattingModule\Entities\ConversationFile;
 use Modules\ChattingModule\Traits\ChattingTrait;
+use Modules\ProviderManagement\Entities\Provider;
+use Modules\UserManagement\Entities\Serviceman;
+use Modules\UserManagement\Entities\User;
 use Ramsey\Uuid\Nonstandard\Uuid;
 use function file_uploader;
 use function response;
@@ -185,16 +188,36 @@ class ChattingController extends Controller
         $validator = Validator::make($request->all(), [
             'reference_id' => '',
             'reference_type' => 'in:booking_id',
-            'to_user' => 'required|uuid'
+            // `to_user` user id, provider id ya serviceman id — teeno accept karte hain
+            // aur niche real login user me resolve karte hain. Pehle yahan `uuid`
+            // rule tha, isliye purane/company provider ke non-standard ids par
+            // chat 400 "The to user must be a valid UUID" de deta tha.
+            'to_user' => 'required|string|max:64'
         ]);
 
         if ($validator->fails()) {
             return response()->json(response_formatter(DEFAULT_400, null, error_processor($validator)), 400);
         }
 
+        $toUserId = $this->resolveChatUserId($request['to_user']);
+
+        if (!$toUserId) {
+            return response()->json(response_formatter(DEFAULT_404, null, [[
+                'error_code' => 'to_user',
+                'message' => translate('The selected contact is not available for chat'),
+            ]]), 404);
+        }
+
+        if ((string)$toUserId === (string)$request->user()->id) {
+            return response()->json(response_formatter(DEFAULT_400, null, [[
+                'error_code' => 'to_user',
+                'message' => translate('You can not start a conversation with yourself'),
+            ]]), 400);
+        }
+
         $channelIds = $this->channelUser->where(['user_id' => $request->user()->id])->pluck('channel_id')->toArray();
-        $findChannel = $this->channelList->whereIn('id', $channelIds)->whereHas('channelUsers', function ($query) use ($request) {
-            $query->where(['user_id' => $request['to_user']]);
+        $findChannel = $this->channelList->whereIn('id', $channelIds)->whereHas('channelUsers', function ($query) use ($toUserId) {
+            $query->where(['user_id' => $toUserId]);
         })->latest()->first();
 
         if (!isset($findChannel)) {
@@ -214,7 +237,7 @@ class ChattingController extends Controller
                 [
                     'id' => Uuid::uuid4(),
                     'channel_id' => $channel->id,
-                    'user_id' => $request['to_user'],
+                    'user_id' => $toUserId,
                     'created_at' => now(),
                     'updated_at' => now()
                 ]
@@ -223,6 +246,57 @@ class ChattingController extends Controller
         }
 
         return response()->json(response_formatter(DEFAULT_200, $findChannel), 200);
+    }
+
+    /**
+     * Chat recipient ko real login user me resolve karo.
+     *
+     * App builds `to_user` me user id, provider id ya serviceman id bhej sakte
+     * hain; kuch purane records ka uuid bina dash (32 hex) ya braces ke bhi ho
+     * sakta hai. Sabko normalize karke users.id return karte hain, warna null.
+     */
+    private function resolveChatUserId($identifier): ?string
+    {
+        foreach ($this->chatIdentifierCandidates($identifier) as $candidate) {
+            $userId = User::where('id', $candidate)->value('id');
+            if ($userId) {
+                return (string)$userId;
+            }
+
+            $providerUserId = Provider::where('id', $candidate)->value('user_id');
+            if ($providerUserId && User::where('id', $providerUserId)->exists()) {
+                return (string)$providerUserId;
+            }
+
+            $servicemanUserId = Serviceman::where('id', $candidate)->value('user_id');
+            if ($servicemanUserId && User::where('id', $servicemanUserId)->exists()) {
+                return (string)$servicemanUserId;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Diye gaye identifier ke possible uuid forms (trim / braces / bina dash).
+     */
+    private function chatIdentifierCandidates($identifier): array
+    {
+        $identifier = is_string($identifier) ? urldecode($identifier) : '';
+        $identifier = trim($identifier, "{}[] \t\n\r\0\x0B");
+
+        if ($identifier === '' || strtolower($identifier) === 'null' || $identifier === '0') {
+            return [];
+        }
+
+        $candidates = [$identifier];
+
+        // 32 hex chars = uuid bina dashes ke
+        if (preg_match('/^[0-9a-fA-F]{32}$/', $identifier)) {
+            $candidates[] = strtolower(preg_replace('/^(.{8})(.{4})(.{4})(.{4})(.{12})$/', '$1-$2-$3-$4-$5', $identifier));
+        }
+
+        return array_values(array_unique($candidates));
     }
 
     /**
