@@ -315,17 +315,34 @@ const UI = (() => {
     </a>`;
   }
 
-  function categoryCard(c) {
+  function categoryCard(c, { picker = true } = {}) {
     const img = c.image_full_path || c.thumbnailFullPath || c.image || '';
     const mins = durationOf(c);
-    return `<a class="cat" href="#/category/${esc(c.slug)}">
+    const inner = `
       <span class="cat__img">
         <img src="${esc(imgSrc(img))}" alt="" loading="lazy"
           onerror="this.onerror=null;this.src='${FALLBACK_IMG}'">
         ${mins ? `<span class="cat__pill">${esc(mins)}</span>` : ''}
       </span>
-      <span class="cat__name">${esc(c.name)}</span>
-    </a>`;
+      <span class="cat__name">${esc(c.name)}</span>`;
+    if (!picker) return `<a class="cat" href="#/category/${esc(c.slug)}">${inner}</a>`;
+    return `<button type="button" class="cat" data-cat-slug="${esc(c.slug)}" data-cat-name="${esc(c.name)}"
+      aria-haspopup="dialog">${inner}</button>`;
+  }
+
+  /* subcategory tile used in the category sheet and on the category page */
+  function subcatCard(s, { active = false } = {}) {
+    const img = s.image_full_path || s.thumbnailFullPath || s.image || '';
+    const mins = durationOf(s);
+    return `<button type="button" class="subcat ${active ? 'is-on' : ''}" data-sub-slug="${esc(s.slug)}"
+      aria-pressed="${active ? 'true' : 'false'}">
+      <span class="subcat__img">
+        <img src="${esc(imgSrc(img))}" alt="" loading="lazy"
+          onerror="this.onerror=null;this.src='${FALLBACK_IMG}'">
+        ${mins ? `<span class="subcat__pill">${esc(mins)}</span>` : ''}
+      </span>
+      <span class="subcat__name">${esc(s.name)}</span>
+    </button>`;
   }
 
   function sectionHead(title, subtitle, moreHref, moreLabel = 'See all') {
@@ -422,7 +439,7 @@ const UI = (() => {
     skeletonRows, skeletonCards, empty, errorState,
     money, fmtDate, fmtDay, fmtTime, nl2br, titleCase, initials, imgSrc,
     variantsOf, priceOf, oldPriceOf, ratingOf, stars, ratingInline, statusPill, STATUS_LABELS,
-    serviceCard, categoryCard, sectionHead, hscrollSection, field, qtyStepper, bindStepper,
+    serviceCard, categoryCard, subcatCard, sectionHead, hscrollSection, field, qtyStepper, bindStepper,
     pagination, mapLink, copyText, scrollToTop, FALLBACK_IMG,
   };
 })();

@@ -24,6 +24,82 @@ window.Views = window.Views || {};
   };
 
   /* =========================================================
+   * CATEGORY PICKER  (main category -> subcategory bottom sheet)
+   * ========================================================= */
+  const CAT_CTX_KEY = 'jb.catctx';
+  const CAT_NAMES_KEY = 'jb.catnames';
+  function rememberCatNames(list) {
+    try {
+      const map = JSON.parse(localStorage.getItem(CAT_NAMES_KEY) || '{}');
+      list.forEach(c => { if (c && c.slug && c.name) map[c.slug] = c.name; });
+      localStorage.setItem(CAT_NAMES_KEY, JSON.stringify(map));
+    } catch (e) {}
+  }
+  function catNameFor(slug) {
+    try { return (JSON.parse(localStorage.getItem(CAT_NAMES_KEY) || '{}')[slug]) || ''; } catch (e) { return ''; }
+  }
+  function readCatCtx() {
+    try { return JSON.parse(sessionStorage.getItem(CAT_CTX_KEY) || 'null'); } catch (e) { return null; }
+  }
+  function saveCatCtx(ctx) {
+    try { sessionStorage.setItem(CAT_CTX_KEY, JSON.stringify(ctx)); } catch (e) {}
+  }
+
+  function bindCategoryTiles(root) {
+    root.querySelectorAll('[data-cat-slug]').forEach(tile => {
+      tile.onclick = () => openCategorySheet(tile.dataset.catSlug, tile.dataset.catName);
+    });
+  }
+
+  async function openCategorySheet(slug, name) {
+    if (!slug) return;
+    rememberCatNames([{ slug, name }]);
+    const body = U.openSheet(`
+      <div class="catsheet">
+        <div class="sheet__head catsheet__head">
+          <div>
+            <span class="eyebrow">Pick a service</span>
+            <h3>${U.esc(name || 'Services')}</h3>
+          </div>
+          <button type="button" class="iconbtn iconbtn--round" data-sheet-close aria-label="Close">
+            ${U.icon('close', 18)}
+          </button>
+        </div>
+        <div class="catsheet__body" data-sheet-body>
+          <div class="catsheet__loading">${U.icon('refresh', 15)} Loading services…</div>
+        </div>
+      </div>`, { size: 'category' });
+    if (!body) return;
+
+    const closer = body.querySelector('[data-sheet-close]');
+    if (closer) closer.onclick = () => U.closeSheet();
+
+    const host = body.querySelector('[data-sheet-body]');
+    let subs = [];
+    try { subs = listOf(await API.getSubgroups(slug)); } catch (e) { subs = []; }
+    if (!host || !host.isConnected) return;
+
+    if (!subs.length) {
+      host.innerHTML = `<p class="catsheet__empty">No sub-services listed here yet.</p>`;
+      return;
+    }
+
+    rememberCatNames(subs);
+    host.innerHTML = `<div class="subcatgrid">${subs.map(s => U.subcatCard(s)).join('')}</div>`;
+    host.querySelectorAll('[data-sub-slug]').forEach(btn => {
+      btn.onclick = () => {
+        saveCatCtx({
+          group: slug,
+          groupName: name,
+          subs: subs.map(s => ({ slug: s.slug, name: s.name })),
+        });
+        U.closeSheet();
+        location.hash = '#/category/' + btn.dataset.subSlug;
+      };
+    });
+  }
+
+  /* =========================================================
    * HOME
    * ========================================================= */
   async function home(view) {
@@ -189,6 +265,9 @@ window.Views = window.Views || {};
         </section>
       </div>`;
 
+    /* category tiles open the subcategory sheet */
+    bindCategoryTiles(view);
+
     /* hero search */
     const heroSearch = view.querySelector('#hero-search');
     heroSearch.onsubmit = (e) => {
@@ -267,6 +346,8 @@ window.Views = window.Views || {};
         ${cats.length ? `<div class="catgrid">${cats.map(U.categoryCard).join('')}</div>`
           : U.empty({ icon: 'grid', title: 'No services in your area yet', text: 'Try setting a different service location.', action: `<button class="btn btn--primary" onclick="App.openLocationSheet()">Set location</button>` })}
       </div>`;
+
+    bindCategoryTiles(view);
   }
 
   /* =========================================================
@@ -276,24 +357,31 @@ window.Views = window.Views || {};
     if (!slug) { location.hash = '#/categories'; return; }
     view.innerHTML = `<div class="page">${U.skeletonRows(2)}${U.skeletonCards(4)}</div>`;
 
+    /* When we arrive from the category sheet we know the parent group, so we can
+       show the clicked subcategory with its siblings around it. */
+    const ctx = readCatCtx();
+    const known = !!(ctx && ctx.group && Array.isArray(ctx.subs) && ctx.subs.some(s => s.slug === slug));
+    const groupSlug = known ? ctx.group : slug;
+
     let subs = [];
     try {
-      const res = await API.getSubgroups(slug);
-      subs = listOf(res);
+      subs = listOf(await API.getSubgroups(groupSlug));
     } catch (e) {
       view.innerHTML = `<div class="page">${U.errorState(e)}</div>`;
       return;
     }
 
-    if (!subs.length) {
-      view.innerHTML = `<div class="page">
-        <header class="pagehead"><h1>Nothing here yet</h1></header>
-        ${U.empty({ icon: 'grid', title: 'No services in this category', text: 'This category is still being prepared.', action: `<a class="btn btn--primary" href="#/categories">Browse categories</a>` })}
-      </div>`;
-      return;
-    }
+    rememberCatNames(subs);
 
-    let active = subs[0];
+    let active = subs.find(s => s.slug === slug) || subs[0];
+    if (!active) {
+      const label = (known && (ctx.subs.find(s => s.slug === slug) || {}).name) ||
+        catNameFor(slug) || U.titleCase(slug);
+      active = { slug, name: label, description: '' };
+    }
+    const groupName = (known && ctx.groupName) ||
+      (active.slug !== slug ? (catNameFor(slug) || 'Services') : active.name);
+
     let page = 1;
     let all = [];
     let lastPage = 1;
@@ -310,25 +398,27 @@ window.Views = window.Views || {};
     function render() {
       view.innerHTML = `
         <div class="page">
-          <nav class="crumbs"><a href="#/">Home</a>${U.icon('chevronRight', 12)}<a href="#/categories">Services</a>${U.icon('chevronRight', 12)}<span>${U.esc(subs[0] && subs[0].name || 'Category')}</span></nav>
+          <nav class="crumbs"><a href="#/">Home</a>${U.icon('chevronRight', 12)}<a href="#/categories">Services</a>${U.icon('chevronRight', 12)}<span>${U.esc(groupName)}</span></nav>
           <header class="pagehead pagehead--inline">
             <div><span class="eyebrow">Pick a service</span><h1>${U.esc(active.name || 'Services')}</h1></div>
             <span class="count">${all.length} service${all.length === 1 ? '' : 's'}</span>
           </header>
-          ${subs.length > 1 ? `<div class="chips chips--scroll">${subs.map(s => `
-            <button class="chip ${s.slug === active.slug ? 'is-on' : ''}" data-slug="${U.esc(s.slug)}">
-              ${U.esc(s.name)}${s.services_count ? `<i>${s.services_count}</i>` : ''}
-            </button>`).join('')}</div>` : ''}
+          ${subs.length > 1 ? `<div class="subcatgrid subcatgrid--page">${subs.map(s => U.subcatCard(s, { active: s.slug === active.slug })).join('')}</div>` : ''}
           ${active.description ? `<p class="leadtxt">${U.esc(active.description)}</p>` : ''}
           <div id="svc-grid">${all.length ? `<div class="cardgrid">${all.map(U.serviceCard).join('')}</div>`
             : U.empty({ icon: 'search', title: 'No services yet', text: 'Try another subcategory.' })}</div>
           <div class="loadmore" id="loadmore-wrap">${page < lastPage ? `<button class="btn btn--ghost" id="more">Show more services</button>` : ''}</div>
         </div>`;
 
-      view.querySelectorAll('.chip[data-slug]').forEach(chip => {
+      view.querySelectorAll('[data-sub-slug]').forEach(chip => {
         chip.onclick = async () => {
-          active = subs.find(s => s.slug === chip.dataset.slug) || active;
+          const next = subs.find(s => s.slug === chip.dataset.subSlug);
+          if (!next || next.slug === active.slug) return;
+          active = next;
           page = 1; all = [];
+          if (location.hash !== '#/category/' + next.slug) {
+            history.replaceState(null, '', '#/category/' + next.slug);
+          }
           view.querySelector('#svc-grid').innerHTML = U.skeletonCards(4);
           try { await load(); } catch (e) { U.toast(e.message, 'error'); }
           render();
