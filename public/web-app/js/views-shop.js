@@ -52,49 +52,45 @@ window.Views = window.Views || {};
     const deals = listOf(val(dealsRes));
     const recent = listOf(val(recentRes));
 
-    const quickCats = cats.slice(0, 8);
-    const heroImage = (popular[0] && (popular[0].cover_image_full_path || popular[0].thumbnail_full_path)) || '';
+    const catList = cats.slice(0, 16);
+    const featured = popular.length ? popular : (trending.length ? trending : recommended);
+    const heroImage = (featured[0] && (featured[0].cover_image_full_path || featured[0].thumbnail_full_path)) || '';
+    const showTrending = trending.length && featured !== trending;
+    const showRecommended = recommended.length && featured !== recommended;
 
     view.innerHTML = `
       <div class="page page--home">
-        <section class="hero">
-          <div class="hero__inner">
-            <div class="hero__copy">
-              <span class="hero__eyebrow"><i></i> Verified home-service professionals</span>
-              <h1>Good help,<br><em>right at home.</em></h1>
-              <p>Book trusted experts for repairs, cleaning and everything in between — with upfront pricing and a professional you can rely on.</p>
+        <section class="uc-hero">
+          <div class="uc-hero__copy">
+            <span class="uc-hero__badge">${U.icon('shield', 13)} Verified professionals, at your doorstep</span>
+            <h1>Good help,<br><em>right at home.</em></h1>
+            <p>Cleaning, repairs, beauty and more — booked in minutes with upfront prices and experts you can trust.</p>
 
-              <form class="hero__search" id="hero-search" role="search">
-                ${U.icon('search', 18)}
-                <input type="search" name="q" placeholder="What do you need help with today?" aria-label="Search services">
-                <button class="btn btn--primary" type="submit">Find help</button>
-              </form>
+            <form class="uc-search" id="hero-search" role="search">
+              ${U.icon('search', 18)}
+              <input type="search" name="q" placeholder="Search for a service" aria-label="Search services" autocomplete="off">
+              <button class="btn btn--primary" type="submit">Search</button>
+            </form>
 
-              <div class="hero__chips">
-                ${quickCats.map(c => `<a class="pill-chip" href="#/category/${U.esc(c.slug)}">${U.esc(c.name)}</a>`).join('')}
-              </div>
-
-              <ul class="hero__proof">
-                <li>${U.icon('shield', 16)} Verified &amp; background-checked</li>
-                <li>${U.icon('tag', 16)} Upfront, fixed pricing</li>
-                <li>${U.icon('clock', 16)} Same-day slots available</li>
-              </ul>
+            <div class="uc-hero__proof">
+              <span>${U.icon('check', 15)} Background verified</span>
+              <span>${U.icon('tag', 15)} Fixed pricing</span>
+              <span>${U.icon('clock', 15)} Same-day slots</span>
             </div>
+          </div>
 
-            <div class="hero__visual" aria-hidden="true">
-              <div class="hero__blob"></div>
-              ${heroImage ? `<div class="hero__photo"><img src="${U.esc(heroImage)}" alt="" onerror="this.remove()"></div>` : ''}
-              <div class="hero__card hero__card--top">
-                <span class="hero__card-ic">${U.icon('check', 16)}</span>
-                <div><b>Professional assigned</b><small>Your expert is on the way</small></div>
-              </div>
-              <div class="hero__card hero__card--bottom">
-                <span class="hero__card-ic hero__card-ic--gold">${U.icon('star', 15)}</span>
-                <div><b>4.8 average rating</b><small>From happy homes near you</small></div>
-              </div>
+          <div class="uc-hero__art" aria-hidden="true">
+            ${heroImage ? `<div class="uc-hero__photo"><img src="${U.esc(heroImage)}" alt="" onerror="this.remove()"></div>` : ''}
+            <div class="uc-hero__float">
+              <span class="uc-hero__ico">${U.icon('star', 16)}</span>
+              <div><b>Rated by happy homes</b><small>Trusted local experts</small></div>
             </div>
           </div>
         </section>
+
+        ${catList.length ? `<section class="uc-cats">
+          <div class="uc-catgrid">${catList.map(U.categoryCard).join('')}</div>
+        </section>` : ''}
 
         ${banners.length ? `
         <section class="section section--tight">
@@ -115,41 +111,58 @@ window.Views = window.Views || {};
           </div>
         </section>` : ''}
 
-        <section class="section">
-          ${U.sectionHead('What can we help with?', 'Explore services', '#/categories', 'All categories')}
-          ${cats.length ? `<div class="catrow">
-            ${cats.slice(0, 12).map(U.categoryCard).join('')}
-          </div>` : U.empty({ icon: 'grid', title: 'Services are being prepared', text: 'Please check back shortly.' })}
-        </section>
-
-        ${(popular.length || trending.length || recommended.length) ? `
-        <section class="section">
-          <div class="tabs" id="home-tabs" role="tablist">
-            ${popular.length ? `<button class="tabs__btn is-on" data-tab="popular" role="tab">Popular</button>` : ''}
-            ${trending.length ? `<button class="tabs__btn ${!popular.length ? 'is-on' : ''}" data-tab="trending" role="tab">Trending</button>` : ''}
-            ${recommended.length ? `<button class="tabs__btn ${!popular.length && !trending.length ? 'is-on' : ''}" data-tab="recommended" role="tab">Recommended</button>` : ''}
+        ${featured.length ? `<section class="section">
+          <div class="uc-section-head">
+            <h2>Most booked services</h2>
+            <a href="#/categories">See all</a>
           </div>
-          <div id="home-tab-panel"></div>
+          <div class="hscroll">${featured.slice(0, 10).map(s => U.serviceCard(s)).join('')}</div>
+        </section>` : ''}
+
+        ${showTrending ? `<section class="section">
+          <div class="uc-section-head">
+            <h2>Trending now</h2>
+            <a href="#/search?q=">Explore</a>
+          </div>
+          <div class="hscroll">${trending.slice(0, 10).map(s => U.serviceCard(s)).join('')}</div>
+        </section>` : ''}
+
+        ${showRecommended ? `<section class="section">
+          <div class="uc-section-head">
+            <h2>Recommended for you</h2>
+            <a href="#/categories">See all</a>
+          </div>
+          <div class="hscroll">${recommended.slice(0, 10).map(s => U.serviceCard(s)).join('')}</div>
         </section>` : ''}
 
         ${deals.length ? `<section class="section">
-          ${U.sectionHead('Deals for your home', 'Save more', '#/offers', 'All offers')}
-          <div class="hscroll">${deals.map(s => U.serviceCard(s, { compact: true })).join('')}</div>
+          <div class="uc-section-head">
+            <h2>Deals for your home</h2>
+            <a href="#/offers">All offers</a>
+          </div>
+          <div class="hscroll">${deals.slice(0, 10).map(s => U.serviceCard(s)).join('')}</div>
         </section>` : ''}
 
         ${recent.length ? `<section class="section">
-          ${U.sectionHead('Pick up where you left off', 'Recently viewed')}
-          <div class="hscroll">${recent.map(s => U.serviceCard(s, { compact: true })).join('')}</div>
+          <div class="uc-section-head">
+            <h2>Pick up where you left off</h2>
+            <a href="#/favorites">Saved</a>
+          </div>
+          <div class="hscroll">${recent.slice(0, 10).map(s => U.serviceCard(s)).join('')}</div>
+        </section>` : ''}
+
+        ${!catList.length && !featured.length ? `<section class="section">
+          ${U.empty({ icon: 'grid', title: 'Services are being prepared', text: 'Please check back shortly.' })}
         </section>` : ''}
 
         <section class="section how">
           <div class="how__head">
-            <span class="eyebrow">Simple by design</span>
+            <span class="eyebrow">How it works</span>
             <h2>Three steps to a sorted home</h2>
           </div>
           <div class="how__grid">
-            <div class="how__step"><span class="how__num">01</span><h3>Tell us what's needed</h3><p>Pick a service, choose your variant and add it to the cart in seconds.</p></div>
-            <div class="how__step"><span class="how__num">02</span><h3>Choose a time</h3><p>Book instantly or schedule for later — you decide when help arrives.</p></div>
+            <div class="how__step"><span class="how__num">01</span><h3>Choose a service</h3><p>Pick what you need and select the option that fits your home.</p></div>
+            <div class="how__step"><span class="how__num">02</span><h3>Pick a time</h3><p>Book instantly or schedule for later — you decide when help arrives.</p></div>
             <div class="how__step"><span class="how__num">03</span><h3>Relax, it's handled</h3><p>Track your professional, pay securely and rate the work when it's done.</p></div>
           </div>
         </section>
@@ -183,20 +196,6 @@ window.Views = window.Views || {};
       const q = heroSearch.querySelector('input').value.trim();
       if (q) location.hash = '#/search?q=' + encodeURIComponent(q);
     };
-
-    /* tabs */
-    const data = { popular, trending, recommended };
-    const panel = view.querySelector('#home-tab-panel');
-    const renderTab = (key) => { panel.innerHTML = `<div class="hscroll">${(data[key] || []).map(s => U.serviceCard(s, { compact: true })).join('')}</div>`; };
-    view.querySelectorAll('#home-tabs .tabs__btn').forEach(btn => {
-      btn.onclick = () => {
-        view.querySelectorAll('#home-tabs .tabs__btn').forEach(b => b.classList.remove('is-on'));
-        btn.classList.add('is-on');
-        renderTab(btn.dataset.tab);
-      };
-    });
-    const firstTab = view.querySelector('#home-tabs .tabs__btn');
-    if (firstTab) renderTab(firstTab.dataset.tab);
 
     /* banner carousel */
     const carousel = view.querySelector('#banners');

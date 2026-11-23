@@ -75,7 +75,7 @@ const App = (() => {
     $('#topbar').innerHTML = `
       <div class="topbar__inner">
         <a class="brand" href="#/" aria-label="${esc(cfg.business_name || 'Jass Booking')} home">
-          ${logo()}
+          <span class="brand__mark">${logo()}</span>
           <span class="brand__name">${esc(cfg.business_name || 'Jass Booking')}</span>
         </a>
 

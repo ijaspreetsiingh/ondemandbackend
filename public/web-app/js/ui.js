@@ -257,39 +257,74 @@ const UI = (() => {
     return `<span class="pill pill--${esc(key)}">${esc(STATUS_LABELS[key] || titleCase(key))}</span>`;
   }
 
+  const compactNumber = (n) => {
+    const v = Number(n) || 0;
+    if (v >= 1000000) return (v / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+    return String(v);
+  };
+
+  function durationOf(item) {
+    const raw = (item && (item.duration || item.service_duration || item.time_required)) ||
+      ((item && item.variations && item.variations[0]) || {}).duration;
+    const mins = Number(raw) || 0;
+    if (!mins) return '';
+    if (mins >= 60) {
+      const hrs = mins / 60;
+      return (Number.isInteger(hrs) ? hrs : hrs.toFixed(1)) + ' hrs';
+    }
+    return mins + ' mins';
+  }
+
   function serviceCard(s, { compact = false } = {}) {
     const price = priceOf(s);
     const old = oldPriceOf(s);
     const hasDiscount = old > price + 0.01;
+    const pct = hasDiscount ? Math.round((1 - price / old) * 100) : 0;
     const rating = ratingOf(s);
+    const count = Number(s.rating_count ?? s.total_rating ?? 0) || 0;
+    const bookings = Number(s.order_count ?? s.bookings_count ?? 0) || 0;
+    const minutes = durationOf(s);
+
+    const meta = [];
+    if (rating) {
+      meta.push(`${icon('star', 11)} <b>${rating.toFixed(2)}</b>${count ? ` (${compactNumber(count)})` : ''}`);
+    } else {
+      meta.push('<span>New</span>');
+    }
+    if (bookings) meta.push(`${compactNumber(bookings)} bookings`);
+    if (minutes) meta.push(minutes);
+
     return `<a class="scard ${compact ? 'scard--compact' : ''}" href="#/service/${esc(s.slug || s.id)}">
       <div class="scard__media">
         <img src="${esc(imgSrc(s.thumbnail_full_path || s.cover_image_full_path))}" alt="${esc(s.name)}" loading="lazy"
              onerror="this.onerror=null;this.src='${FALLBACK_IMG}'">
-        ${hasDiscount ? `<span class="scard__badge">-${Math.round((1 - price / old) * 100)}%</span>` : ''}
+        ${hasDiscount ? `<span class="scard__badge">${pct}% off</span>` : ''}
         ${s.is_favorite ? `<span class="scard__fav">${icon('heart', 14)}</span>` : ''}
-        ${rating ? `<span class="scard__rating">${icon('star', 12)} ${rating}</span>` : ''}
+        <span class="scard__add">Book</span>
       </div>
       <div class="scard__body">
         <h4>${esc(s.name)}</h4>
-        ${s.short_description ? `<p>${esc(s.short_description)}</p>` : ''}
+        <div class="scard__meta">${meta.join('<span class="dot"></span>')}</div>
         <div class="scard__foot">
-          <div class="scard__price">
-            <span class="price">${price > 0 ? money(price) : 'Get a quote'}</span>
-            ${hasDiscount ? `<s class="oldprice">${money(old)}</s>` : ''}
-          </div>
-          <span class="scard__cta">${icon('arrowRight', 14)}</span>
+          ${price > 0
+            ? `<span class="scard__from">Starts at</span><span class="price">${money(price)}</span>${hasDiscount ? `<s class="oldprice">${money(old)}</s>` : ''}`
+            : `<span class="price">Get a quote</span>`}
         </div>
       </div>
     </a>`;
   }
 
   function categoryCard(c) {
+    const img = c.image_full_path || c.thumbnailFullPath || c.image || '';
+    const mins = durationOf(c);
     return `<a class="cat" href="#/category/${esc(c.slug)}">
-      <span class="cat__img"><img src="${esc(imgSrc(c.image_full_path || c.thumbnailFullPath))}" alt="" loading="lazy"
-        onerror="this.onerror=null;this.src='${FALLBACK_IMG}'"></span>
+      <span class="cat__img">
+        <img src="${esc(imgSrc(img))}" alt="" loading="lazy"
+          onerror="this.onerror=null;this.src='${FALLBACK_IMG}'">
+        ${mins ? `<span class="cat__pill">${esc(mins)}</span>` : ''}
+      </span>
       <span class="cat__name">${esc(c.name)}</span>
-      <span class="cat__arrow">${icon('arrowRight', 14)}</span>
     </a>`;
   }
 
