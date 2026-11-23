@@ -11,8 +11,29 @@ const App = (() => {
   let booted = false;
   let currentRoute = '';
 
+  /* ---------------- theme ---------------- */
+  function themeName() {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  }
+
+  function applyTheme(name, persist = false) {
+    const dark = name === 'dark';
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', dark ? '#0b0b0c' : '#0c4a4f');
+    if (persist) { try { localStorage.setItem('jb.theme', dark ? 'dark' : 'light'); } catch (e) { /* storage blocked */ } }
+    UI.$$('[data-theme-toggle]').forEach(btn => {
+      btn.innerHTML = icon(dark ? 'sun' : 'moon', 20);
+      btn.setAttribute('aria-pressed', dark ? 'true' : 'false');
+      btn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+      btn.setAttribute('title', dark ? 'Light mode' : 'Dark mode');
+    });
+  }
+
   /* ---------------- boot ---------------- */
   async function boot() {
+    applyTheme(themeName());
     try {
       const res = await API.getConfig();
       if (!API.ok(res)) throw new Error((res && res.message) || 'Could not load app configuration');
@@ -99,6 +120,9 @@ const App = (() => {
         </form>
 
         <div class="topbar__actions">
+          <button class="iconbtn themebtn" type="button" data-theme-toggle aria-pressed="${themeName() === 'dark' ? 'true' : 'false'}"
+            aria-label="${themeName() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}"
+            title="${themeName() === 'dark' ? 'Light mode' : 'Dark mode'}">${icon(themeName() === 'dark' ? 'sun' : 'moon', 20)}</button>
           <a class="iconbtn iconbtn--badge" href="#/cart" aria-label="Cart">
             ${icon('cart', 20)}<span class="badge" id="cart-badge" ${state.cartCount ? '' : 'hidden'}>${state.cartCount}</span>
           </a>
@@ -591,6 +615,12 @@ const App = (() => {
     });
 
     document.addEventListener('click', (e) => {
+      const themeBtn = e.target.closest('[data-theme-toggle]');
+      if (themeBtn) {
+        e.preventDefault();
+        applyTheme(themeName() === 'dark' ? 'light' : 'dark', true);
+        return;
+      }
       const logout = e.target.closest('[data-logout]');
       if (logout) {
         e.preventDefault();
@@ -616,7 +646,7 @@ const App = (() => {
   }
 
   return {
-    boot, route, go, requireAuth, refreshChrome, renderChrome, syncBadges,
+    boot, route, go, requireAuth, refreshChrome, renderChrome, syncBadges, applyTheme, themeName,
     openLocationSheet, applyCoords, applyAddress, doLogout,
     get booted() { return booted; },
   };

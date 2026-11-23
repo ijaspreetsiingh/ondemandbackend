@@ -7,6 +7,14 @@
   <meta name="description" content="Book verified professionals for cleaning, plumbing, electrical, carpentry, painting, AC repair and more — upfront prices, trusted local experts, in minutes.">
   <meta name="theme-color" content="#0c4a4f">
   <link rel="icon" type="image/png" href="/landing/images/favicon.png">
+  <script>
+    /* apply the saved colour theme before first paint */
+    try {
+      if (localStorage.getItem('jb.theme') === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    } catch (e) {}
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
