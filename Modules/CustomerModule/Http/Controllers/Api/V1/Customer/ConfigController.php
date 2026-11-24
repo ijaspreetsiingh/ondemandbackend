@@ -904,7 +904,9 @@ class ConfigController extends Controller
         // ~1m precision: map drag karne par same cell cache hit hota hai.
         $cacheLat = round((float) $request->lat, 5);
         $cacheLng = round((float) $request->lng, 5);
-        $cacheKey = 'geo:reverse:' . $cacheLat . ',' . $cacheLng;
+        // Version the reverse-geocode cache so addresses produced by the older
+        // lookup format are not kept for a week after the formatter changes.
+        $cacheKey = 'geo:reverse:v2:' . $cacheLat . ',' . $cacheLng;
         $data = Cache::get($cacheKey);
 
         if (!is_array($data)) {
