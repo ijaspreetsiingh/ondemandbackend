@@ -34,6 +34,36 @@ use Modules\UserManagement\Entities\UserAddress;
 trait BookingTrait
 {
     /**
+     * Provider ko dikhne wala service address snapshot.
+     *
+     * Pehle sirf UserAddress::find(service_address_id) use hota tha, isliye
+     * guest ya newly-entered (id-less) address par snapshot string "null" ban
+     * jata tha aur provider ko address hi nahi milta tha. Ab saved address na
+     * mile to request me aaya address JSON hi snapshot ban jata hai.
+     */
+    private function bookingServiceAddressSnapshot($request): ?string
+    {
+        $addressId = $request['service_address_id'] ?? null;
+        if (!empty($addressId)) {
+            $address = UserAddress::find($addressId);
+            if ($address) {
+                return json_encode($address);
+            }
+        }
+
+        $raw = $request['service_address'] ?? null;
+        if (is_string($raw) && trim($raw) !== '') {
+            $raw = json_decode($raw, true);
+        }
+
+        if (is_array($raw) && !empty($raw['address'])) {
+            return json_encode($raw);
+        }
+
+        return null;
+    }
+
+    /**
      * Booking se pehle mandatory serviceability check (server-side, UI/API visibility par bharosa nahi).
      * Agar koi bhi cart item (sub_category) zone + assignment + provider eligibility ke bahar hai
      * to failure array return karo, warna null.
@@ -233,7 +263,7 @@ trait BookingTrait
                 $booking->extra_fee = $extraFee;
                 $booking->platform_fee = $platformFee;
                 $booking->total_referral_discount_amount = $referralDiscount;
-                $booking->service_address_location = json_encode(UserAddress::find($request['service_address_id'])) ?? null;
+                $booking->service_address_location = $this->bookingServiceAddressSnapshot($request);
                 $booking->service_location = $request['service_location'];
                 // "Book again with same serviceman" — assignment flow pehle isi
                 // serviceman ko request bhejega (decline/expire par nearest).
@@ -558,7 +588,7 @@ trait BookingTrait
                     $totalDiscount = $cartData->sum('coupon_discount') * $maxCouponUsagePerUser;
                 }
 
-                $serviceAddress = json_encode(UserAddress::find($request['service_address_id'])) ?? null;
+                $serviceAddress = $this->bookingServiceAddressSnapshot($request);
 
                 $booking->customer_id = $userId;
                 $booking->provider_id = $repeatProviderId;
@@ -819,6 +849,10 @@ trait BookingTrait
             $booking->total_coupon_discount_amount = 0;
             $booking->service_schedule = date('Y-m-d H:i:s', strtotime($data['service_schedule'])) ?? now()->addHours(5);
             $booking->service_address_id = $data['service_address_id'] ?? '';
+            $booking->service_address_location = $this->bookingServiceAddressSnapshot([
+                'service_address_id' => $data['service_address_id'] ?? null,
+                'service_address' => $request['service_address'] ?? null,
+            ]);
             $booking->booking_otp = (string) random_int(100000, 999999);
             $booking->is_guest = 0;
             $booking->extra_fee = $extraFee;

@@ -442,7 +442,7 @@ class LoginController extends Controller
         $temporaryToken = Str::random(40);
 
         if (!$user){
-            return response()->json(response_formatter(AUTH_LOGIN_200, ['temporary_token' => $temporaryToken, 'status' => false, 'email' => $appleEmail], 200));
+            return response()->json(response_formatter(AUTH_LOGIN_200, ['temporary_token' => $temporaryToken, 'status' => false, 'email' => $appleEmail ?? ($data['email'] ?? $email)], 200));
         }
 
         if ($request['guest_id']){
@@ -453,10 +453,18 @@ class LoginController extends Controller
             return response()->json(response_formatter(ACCOUNT_DISABLED), 401);
         }
 
+        // Google already verifies the mailbox, so a social login must not be
+        // blocked by an app-side "email not verified" state. Earlier this path
+        // answered 200 without any token, so the app looked like it did nothing.
+        if ($request['medium'] == 'google' && !$user->is_email_verified && filter_var($data['email_verified'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            $user->is_email_verified = 1;
+            $user->save();
+        }
+
         if ($user->is_email_verified == 1){
             return response()->json(response_formatter(AUTH_LOGIN_200, self::authenticate($user, CUSTOMER_PANEL_ACCESS)), 200);
         }else{
-            return response()->json(response_formatter(AUTH_LOGIN_200, ['status' => false], 200));
+            return response()->json(response_formatter(UNVERIFIED_EMAIL, ['status' => false, 'email' => $user->email]), 401);
         }
     }
 
@@ -478,9 +486,121 @@ class LoginController extends Controller
      */
     public function registrationWithSocialMedia(Request $request): JsonResponse
     {
-        // This legacy endpoint created verified accounts from caller supplied
-        // email/phone/profile fields without a social-provider proof.
-        return response()->json(response_formatter(AUTH_LOGIN_401), 401);
+        $validator = Validator::make($request->all(), [
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'nullable|string|max:255',
+            'phone' => 'required|string|max:15',
+            'email' => 'required|email',
+            'token' => 'required|string',
+            'medium' => 'required|in:google',
+            'guest_id' => 'nullable|uuid',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(response_formatter(DEFAULT_400, null, error_processor($validator)), 400);
+        }
+
+        // The account is only created when the provider credential proves the
+        // email. Previously this endpoint was disabled, so every Google signup
+        // hit a 401 after the profile form and the app stayed stuck.
+        $profile = $this->fetchGoogleProfile((string) $request['token']);
+        if (!$profile) {
+            return response()->json(response_formatter([
+                'response_code' => 'auth_login_401',
+                'message' => translate('Google login verification failed. Please try again.'),
+            ]), 401);
+        }
+
+        $verifiedEmail = strtolower(trim((string) $profile['email']));
+        $requestedEmail = strtolower(trim((string) $request['email']));
+        if ($verifiedEmail !== $requestedEmail) {
+            return response()->json(response_formatter([
+                'response_code' => 'auth_login_403',
+                'message' => translate('email_does_not_match'),
+            ]), 403);
+        }
+
+        $existingUser = $this->user->where('email', $verifiedEmail)->first();
+        if ($existingUser) {
+            if (!in_array($existingUser->user_type, CUSTOMER_USER_TYPES)) {
+                return response()->json(response_formatter(ALREADY_USE_EMAIL_ANOTHER_ACCOUNT), 403);
+            }
+            if ($existingUser->is_active != 1) {
+                return response()->json(response_formatter(ACCOUNT_DISABLED), 401);
+            }
+            if (!$existingUser->is_email_verified) {
+                $existingUser->is_email_verified = 1;
+                $existingUser->save();
+            }
+            if ($request['guest_id']) {
+                $this->updateAddressAndCartUser($existingUser->id, $request['guest_id']);
+            }
+            return response()->json(response_formatter(AUTH_LOGIN_200, self::authenticate($existingUser, CUSTOMER_PANEL_ACCESS)), 200);
+        }
+
+        $phoneOwner = $this->user->where('phone', $request['phone'])->first();
+        if ($phoneOwner) {
+            return response()->json(response_formatter(ALREADY_USE_NUMBER_ANOTHER_ACCOUNT), 403);
+        }
+
+        $user = $this->user->create([
+            'first_name' => $request->first_name,
+            'last_name' => $request->last_name ?? '',
+            'email' => $verifiedEmail,
+            'phone' => $request['phone'],
+            'password' => bcrypt(rand(11111111, 99999999)),
+            'language_code' => $request->header('X-localization') ?? 'en',
+            'is_email_verified' => 1,
+            'is_phone_verified' => 1,
+            'is_active' => 1,
+        ]);
+
+        if ($request['guest_id']) {
+            $this->updateAddressAndCartUser($user->id, $request['guest_id']);
+        }
+
+        return response()->json(response_formatter(AUTH_LOGIN_200, self::authenticate($user, CUSTOMER_PANEL_ACCESS)), 200);
+    }
+
+    /**
+     * Verify a Google ID token (JWT) or OAuth access token and return the
+     * provider profile, or null when it cannot be trusted.
+     *
+     * @param string $token
+     * @return array|null
+     */
+    private function fetchGoogleProfile(string $token): ?array
+    {
+        try {
+            $client = new Client();
+
+            if (substr_count($token, '.') === 2) {
+                $socialSetup = login_setup('social_media_for_login');
+                $googleCfg = json_decode($socialSetup?->value ?? '[]', true) ?? [];
+                $expectedAud = trim((string) ($googleCfg['google_web_client_id'] ?? ''));
+                if ($expectedAud === '') {
+                    Log::warning('Google social signup failed: google_web_client_id missing in login_setup.');
+                    return null;
+                }
+
+                $res = $client->request('GET', 'https://oauth2.googleapis.com/tokeninfo?id_token=' . urlencode($token));
+                $data = json_decode($res->getBody()->getContents(), true);
+                $aud = (string) ($data['aud'] ?? '');
+                $projectPrefix = str_contains($expectedAud, '-') ? explode('-', $expectedAud)[0] . '-' : '';
+                $audMatches = $aud === $expectedAud || ($projectPrefix !== '' && str_starts_with($aud, $projectPrefix));
+                if (!isset($data['email']) || !$audMatches) {
+                    return null;
+                }
+                return $data;
+            }
+
+            $res = $client->request('GET', 'https://www.googleapis.com/oauth2/v3/userinfo?access_token=' . urlencode($token));
+            $data = json_decode($res->getBody()->getContents(), true);
+            return isset($data['email']) ? $data : null;
+        } catch (Exception $exception) {
+            Log::warning('Google social signup verification failed: ' . $exception->getMessage());
+            return null;
+        }
     }
 
     /**

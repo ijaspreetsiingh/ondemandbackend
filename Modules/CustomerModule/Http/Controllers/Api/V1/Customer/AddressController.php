@@ -166,7 +166,9 @@ class AddressController extends Controller
         $address->zip_code = $request->zip_code;
         $address->country = $request->country;
         $address->address = $request->address;
-        $address->zone_id = $zone_id;
+        // Zone resolve na ho to purana zone rakho — warna address ka zone null
+        // ho jata tha aur us address se booking "not in your area" deti thi.
+        $address->zone_id = $zone ? $zone->id : $address->zone_id;
         $address->address_type = $request->address_type;
         $address->contact_person_name = $request->contact_person_name;
         $address->contact_person_number = $request->contact_person_number;
