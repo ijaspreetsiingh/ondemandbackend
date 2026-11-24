@@ -923,6 +923,29 @@ class ConfigController extends Controller
         if (isset($data['display_name'])) {
             $address = $data['address'] ?? [];
 
+            // Sabse precise details pehle: ghar/road/area, phir city/state/pincode.
+            // Isse "Badarpur Thermal Power Station..." jaisa POI naam address se
+            // hat jata hai aur user ka actual area (suburb/neighbourhood) dikhta hai.
+            $preciseParts = [];
+            foreach ([
+                $address['house_number'] ?? null,
+                $address['road'] ?? null,
+                $address['neighbourhood'] ?? null,
+                $address['suburb'] ?? null,
+                $address['city'] ?? $address['town'] ?? $address['village'] ?? null,
+                $address['city_district'] ?? null,
+                $address['state_district'] ?? null,
+                $address['state'] ?? null,
+                $address['postcode'] ?? null,
+                $address['country'] ?? null,
+            ] as $part) {
+                if (is_string($part) && trim($part) !== '') {
+                    $preciseParts[] = trim($part);
+                }
+            }
+            $preciseParts = array_values(array_unique($preciseParts));
+            $formattedAddress = !empty($preciseParts) ? implode(', ', $preciseParts) : $data['display_name'];
+
             $addressComponents = [];
             if (isset($address['country'])) {
                 $addressComponents[] = [
@@ -967,12 +990,26 @@ class ConfigController extends Controller
                     'types' => ['postal_code'],
                 ];
             }
+            if (isset($address['neighbourhood'])) {
+                $addressComponents[] = [
+                    'long_name' => $address['neighbourhood'],
+                    'short_name' => $address['neighbourhood'],
+                    'types' => ['neighborhood', 'political'],
+                ];
+            }
+            if (isset($address['suburb'])) {
+                $addressComponents[] = [
+                    'long_name' => $address['suburb'],
+                    'short_name' => $address['suburb'],
+                    'types' => ['sublocality', 'sublocality_level_1', 'political'],
+                ];
+            }
 
             $content = [
                 'status' => 'OK',
                 'results' => [
                     [
-                        'formatted_address' => $data['display_name'],
+                        'formatted_address' => $formattedAddress,
                         'types' => [$data['type'] ?? 'street_address'],
                         'address_components' => $addressComponents,
                     ],

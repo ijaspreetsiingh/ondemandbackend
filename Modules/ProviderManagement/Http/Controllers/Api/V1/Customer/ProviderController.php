@@ -92,7 +92,9 @@ class ProviderController extends Controller
                 $query->where('zone_id', $zoneId);
             })
             ->ofStatus(1)
-            ->where('is_suspended', 0);
+            ->when(business_config('suspend_on_exceed_cash_limit_provider', 'provider_config')->live_values, function ($query) {
+                $query->where('is_suspended', 0);
+            });
 
         // Get zone-filtered provider IDs (much fewer than all providers)
         $zoneFilteredProviderIds = $providersQuery->pluck('id')->values()->all();
@@ -137,7 +139,9 @@ class ProviderController extends Controller
             ->when(!$request->has('sort_by') || $request['sort_by'] === 'default', function ($query) {
                 $query->latest();
             })
-            ->where('is_suspended', 0);
+            ->when(business_config('suspend_on_exceed_cash_limit_provider', 'provider_config')->live_values, function ($query) {
+                $query->where('is_suspended', 0);
+            });
 
         if ($hasGeoLocation) {
             $providers = $providersQuery->get();
@@ -310,7 +314,9 @@ class ProviderController extends Controller
                 $query->where('sub_category_id', $request['sub_category_id']);
             })
             ->where('service_availability', 1)
-            ->where('is_suspended', 0)
+            ->when(business_config('suspend_on_exceed_cash_limit_provider', 'provider_config')->live_values, function ($query) {
+                $query->where('is_suspended', 0);
+            })
             ->where('is_active', 1)
             ->get();
 

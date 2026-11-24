@@ -421,6 +421,14 @@ if (!function_exists('provider_warning_amount_calculate')) {
             $limit_amount = (business_config('max_cash_in_hand_limit_provider', 'provider_config'))->live_values ?? 0;
             $amount = $payable - $receivable;
 
+            // Limit 0/khali = cash limit feature off. Pehle is case me
+            // $percentage_100 bhi 0 hota tha, isliye thoda sa bhi payable
+            // ho to provider ko '100_percent' milta aur auto-suspend ho kar
+            // user app me "provider not in your area" dikhta tha.
+            if ((float) $limit_amount <= 0) {
+                return false;
+            }
+
             $percentage_80 = 0.8 * $limit_amount;
             $percentage_100 = $limit_amount;
 
@@ -3002,8 +3010,13 @@ if (!function_exists('subscribed_assignment_query')) {
             $query->ofStatus(1)
                 ->whereHas('provider', function ($provider) use ($zoneId) {
                     $provider->ofStatus(1)
-                        ->ofApproval(1)
-                        ->where('is_suspended', 0);
+                        ->ofApproval(1);
+
+                    // Suspension sirf tab count karo jab admin ne cash-limit
+                    // suspension setting on rakhi ho (baaki app bhi yahi maanti hai).
+                    if (business_config('suspend_on_exceed_cash_limit_provider', 'provider_config')->live_values) {
+                        $provider->where('is_suspended', 0);
+                    }
 
                     if (!empty($zoneId)) {
                         $provider->where('zone_id', $zoneId);

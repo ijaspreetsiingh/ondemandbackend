@@ -52,7 +52,11 @@ class Account extends Model
                 $provider = Provider::where('user_id', $model->user_id)->first();
                 $emailStatus = business_config('email_config_status', 'email_config')->live_values;
 
-                if ($limit_status == '100_percent') {
+                // Admin setting band ho to cash limit ke naam par provider
+                // suspend nahi hona chahiye (baaki app isi setting ko follow karti hai).
+                $suspendOnLimit = (bool) (business_config('suspend_on_exceed_cash_limit_provider', 'provider_config')->live_values ?? 0);
+
+                if ($limit_status == '100_percent' && $suspendOnLimit) {
                     if ($provider){
                         $provider->is_suspended = 1;
                         $provider->save();
