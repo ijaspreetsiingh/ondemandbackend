@@ -60,6 +60,19 @@ class ServicemanSelectionController extends Controller
                 ->filter(fn ($service) => $service['category_id'] !== '' && $service['sub_category_id'] !== '')
                 ->unique(fn ($service) => $service['category_id'] . ':' . $service['sub_category_id'])
                 ->values();
+            // Manual picker eligibility = auto-assignment eligibility.
+            // Auto-assign (findNearestServicemen) sirf sub_category_id se match
+            // karta hai aur provider ki "any category" setting respect karta
+            // hai. Pehle yahan category_id + sub_category_id dono ka strict
+            // match tha, isliye group / multi-service carts me (aur un services
+            // me jinki serviceman_categories row me category_id different ho)
+            // list khali aati thi jabki booking assign ho sakti thi.
+            $requirementSubCategoryIds = $requirements
+                ->pluck('sub_category_id')
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
             $serviceProviderIds = $requirements->pluck('provider_id')->filter()->unique()->values();
             if ($serviceProviderIds->count() > 1) {
                 return response()->json(response_formatter(DEFAULT_200, [], 'Choose a single provider to select one serviceman for all services'), 200);
@@ -99,12 +112,13 @@ class ServicemanSelectionController extends Controller
                         ->where('provider_id', $candidateProvider->id)
                         ->where('is_on_duty', 1)
                         ->whereHas('user', fn ($query) => $query->where('is_active', 1))
-                        ->where(function ($query) use ($requirements) {
-                            foreach ($requirements as $service) {
-                                $query->whereHas('servicemanCategories', function ($categoryQuery) use ($service) {
-                                    $categoryQuery->where('sub_category_id', $service['sub_category_id'])
-                                        ->where('category_id', $service['category_id']);
-                                });
+                        ->when(!$candidateProvider->auto_assign_any_category, function ($query) use ($requirementSubCategoryIds) {
+                            if (empty($requirementSubCategoryIds)) {
+                                $query->whereRaw('1 = 0');
+                            } else {
+                                $query->whereHas('servicemanCategories', fn ($categoryQuery) =>
+                                    $categoryQuery->whereIn('sub_category_id', $requirementSubCategoryIds)
+                                );
                             }
                         })
                         ->exists();
@@ -125,12 +139,12 @@ class ServicemanSelectionController extends Controller
                 return response()->json(response_formatter(DEFAULT_400, null, ['error' => 'Provider not found']), 400);
             }
 
-            // A manually selected serviceman must belong to the provider that
-            // actually serves this sub-category in the selected zone.
+            // Requested sub-categories exist honi chahiye. parent_id strict
+            // match nahi karte — group services me category mapping alag hoti
+            // hai aur auto-assign bhi usi par depend nahi karta.
             foreach ($requirements as $service) {
-                $subCategory = Category::find($service['sub_category_id']);
-                if (!$subCategory || (string) $subCategory->parent_id !== $service['category_id']) {
-                    return response()->json(response_formatter(DEFAULT_400, null, ['error' => 'Category does not match sub-category']), 400);
+                if (!Category::whereKey($service['sub_category_id'])->exists()) {
+                    return response()->json(response_formatter(DEFAULT_400, null, ['error' => 'Service category not found']), 400);
                 }
             }
 
@@ -145,20 +159,26 @@ class ServicemanSelectionController extends Controller
             }
 
             // Offer only servicemen who can receive an assignment right now.
-            // CATEGORY FILTER: Serviceman must have this sub_category assigned
+            // CATEGORY FILTER: wahi rule jo auto-assign use karta hai —
+            // sub_category_id se match (category_id strict nahi), aur provider
+            // ki "assign any category" setting on ho to filter hi nahi.
+            $allowAnyCategory = (bool) $provider->auto_assign_any_category;
             $servicemenQuery = Serviceman::with(['user:id,first_name,last_name,profile_image,current_lat,current_lng'])
                 ->where('provider_id', $providerId)
                 ->where('is_on_duty', 1)
                 ->whereHas('user', fn($q) => $q->where('is_active', 1));
 
-            // One selected serviceman must be assigned to every distinct
-            // service category in the cart, or some bookings would be left
-            // without the customer's chosen person.
-            foreach ($requirements as $service) {
-                $servicemenQuery->whereHas('servicemanCategories', function ($q) use ($service) {
-                    $q->where('sub_category_id', $service['sub_category_id'])
-                      ->where('category_id', $service['category_id']);
-                });
+            if (!$allowAnyCategory) {
+                if (empty($requirementSubCategoryIds)) {
+                    $servicemenQuery->whereRaw('1 = 0');
+                } else {
+                    // Group / multi-service cart: koi bhi ek requested
+                    // sub-category assigned ho to serviceman eligible hai
+                    // (auto-assign bhi aisa hi karta hai).
+                    $servicemenQuery->whereHas('servicemanCategories', fn($q) =>
+                        $q->whereIn('sub_category_id', $requirementSubCategoryIds)
+                    );
+                }
             }
             $servicemen = $servicemenQuery->get();
 
@@ -289,9 +309,12 @@ class ServicemanSelectionController extends Controller
                     ->where('provider_id', $booking->provider_id)
                     ->where('is_on_duty', 1)
                     ->whereHas('user', fn ($query) => $query->where('is_active', 1))
-                    ->whereHas('servicemanCategories', function ($query) use ($booking, $subCategory) {
-                        $query->where('sub_category_id', $booking->sub_category_id)
-                            ->where('category_id', $subCategory->parent_id);
+                    // Picker ke saath consistent: sirf sub_category match.
+                    // group services me serviceman_categories.category_id
+                    // parent se different ho sakta hai, jisse valid pick
+                    // "unavailable" bol ke reject ho jata tha.
+                    ->whereHas('servicemanCategories', function ($query) use ($booking) {
+                        $query->where('sub_category_id', $booking->sub_category_id);
                     })
                     ->first();
 
