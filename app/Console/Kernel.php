@@ -22,7 +22,7 @@ class Kernel extends ConsoleKernel
 
         // W4.24: failed queue jobs 48h baad prune; redis reserved jobs bhi
         $schedule->command('queue:prune-failed --hours=48')->dailyAt('04:00');
-        $schedule->command('queue:prune --hours=48')->dailyAt('04:15');
+        $schedule->command('queue:prune-batches --hours=48')->dailyAt('04:15');
     }
 
     /**
