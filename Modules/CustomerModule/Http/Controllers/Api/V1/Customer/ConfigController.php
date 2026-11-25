@@ -906,11 +906,11 @@ class ConfigController extends Controller
         $cacheLng = round((float) $request->lng, 5);
         // Version the reverse-geocode cache so addresses produced by the older
         // lookup format are not kept for a week after the formatter changes.
-        $cacheKey = 'geo:reverse:v2:' . $cacheLat . ',' . $cacheLng;
+        $cacheKey = 'geo:reverse:v3:' . $cacheLat . ',' . $cacheLng;
         $data = Cache::get($cacheKey);
 
         if (!is_array($data)) {
-            $url = "https://nominatim.openstreetmap.org/reverse?lat={$cacheLat}&lon={$cacheLng}&format=json&addressdetails=1&zoom=18";
+            $url = "https://nominatim.openstreetmap.org/reverse?lat={$cacheLat}&lon={$cacheLng}&format=json&addressdetails=1&namedetails=1&extratags=1&zoom=18";
             $response = Http::withHeaders([
                 'User-Agent' => 'YOVOServiceApp/1.0 (support@yovoservice.app)',
                 'Accept-Language' => 'en',
@@ -928,8 +928,10 @@ class ConfigController extends Controller
             // Sabse precise details pehle: ghar/road/area, phir city/state/pincode.
             // Isse "Badarpur Thermal Power Station..." jaisa POI naam address se
             // hat jata hai aur user ka actual area (suburb/neighbourhood) dikhta hai.
+            $placeName = trim((string) ($data['namedetails']['name:en'] ?? $data['namedetails']['name'] ?? $data['name'] ?? ''));
             $preciseParts = [];
             foreach ([
+                $placeName,
                 $address['house_number'] ?? null,
                 $address['road'] ?? null,
                 $address['neighbourhood'] ?? null,
@@ -1012,8 +1014,15 @@ class ConfigController extends Controller
                 'results' => [
                     [
                         'formatted_address' => $formattedAddress,
-                        'types' => [$data['type'] ?? 'street_address'],
-                        'address_components' => $addressComponents,
+                        'types' => $this->getReverseGeocodeTypes($data),
+                        'address_components' => array_merge(
+                            $placeName !== '' ? [[
+                                'long_name' => $placeName,
+                                'short_name' => $placeName,
+                                'types' => $this->getReverseGeocodeTypes($data),
+                            ]] : [],
+                            $addressComponents
+                        ),
                     ],
                 ],
             ];
@@ -1027,6 +1036,35 @@ class ConfigController extends Controller
         return response()->json(response_formatter(DEFAULT_200, $content), 200);
     }
 
+    private function getReverseGeocodeTypes(array $data): array
+    {
+        $class = strtolower((string) ($data['class'] ?? ''));
+        $type = strtolower((string) ($data['type'] ?? ''));
+        $placeName = trim((string) ($data['namedetails']['name:en'] ?? $data['namedetails']['name'] ?? $data['name'] ?? ''));
+        $types = [];
+
+        if ($placeName !== '') {
+            $types = ['point_of_interest', 'establishment'];
+        }
+
+        if ($class === 'shop' && in_array($type, ['mall', 'shopping_centre', 'department_store'], true)) {
+            $types[] = 'shopping_mall';
+        }
+
+        if ($class === 'building' || in_array($type, ['house', 'apartments', 'commercial'], true)) {
+            $types[] = 'premise';
+        }
+
+        if ($class === 'highway') {
+            $types[] = 'route';
+        }
+
+        if (empty($types)) {
+            $types[] = $type !== '' ? $type : 'street_address';
+        }
+
+        return array_values(array_unique($types));
+    }
     private function getPaymentMethods(): array
     {
         // Check if the addon_settings table exists
