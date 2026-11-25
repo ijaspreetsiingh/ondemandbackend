@@ -2768,9 +2768,13 @@ if (!function_exists('effective_zone_variations')) {
         $loaded = $service->relationLoaded('variations') ? $service->variations : null;
 
         if (empty($zoneId)) {
-            return $loaded
-                ? $loaded->where('price', '>', 0)->values()
-                : $service->variations()->where('price', '>', 0)->get();
+            // No selected address means we cannot safely expose prices from an
+            // arbitrary city zone. Use only the configured catch-all zone, the
+            // same fallback accepted by the cart price resolver.
+            $zoneId = global_zone_id();
+            if (empty($zoneId)) {
+                return collect();
+            }
         }
 
         $current = $loaded
@@ -2813,6 +2817,9 @@ if (!function_exists('variation_for_zone')) {
     function variation_for_zone(string $serviceId, string $variantKey, ?string $zoneId = null)
     {
         $zoneId = $zoneId ?: \Illuminate\Support\Facades\Config::get('zone_id');
+        // Match service-detail pricing when a customer has not selected an
+        // address yet: resolve the variant from the catch-all zone.
+        $zoneId = $zoneId ?: global_zone_id();
         if (empty($zoneId)) {
             return null;
         }
