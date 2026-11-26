@@ -109,7 +109,7 @@ class ServiceController extends Controller
         }
 
         $decodedString = trim((string) $request->input('string', ''));
-        $keys = array_values(array_unique(array_filter(preg_split('/\\s+/', $decodedString) ?: [])));
+        $tokenGroups = $this->searchTokenGroups($decodedString);
         $zoneId = Config::get('zone_id');
         $globalZoneId = global_zone_id();
 
@@ -128,58 +128,33 @@ class ServiceController extends Controller
             ->withCount('favorites', 'bookings')
             ->active()
             ->visibleInCurrentZone()
-            ->where(function ($query) use ($decodedString, $keys, $zoneId, $globalZoneId) {
+            ->where(function ($query) use ($tokenGroups, $zoneId, $globalZoneId) {
                 $priceZoneIds = array_values(array_filter(array_unique([$zoneId, $globalZoneId])));
-                foreach ($keys as $key) {
-                    $query->where(function ($term) use ($key, $priceZoneIds) {
-                    $query = $term;
-                    $query->orWhere('name', 'LIKE', '%' . $key . '%');
-                    $query->orWhere('short_description', 'LIKE', '%' . $key . '%');
-                    $query->orWhere('description', 'LIKE', '%' . $key . '%');
-                    $query->orWhereHas('variations', function ($query) use ($key, $priceZoneIds) {
-                        $query->withoutGlobalScope('zone_wise_data')
-                            ->when(!empty($priceZoneIds), fn ($q) => $q->whereIn('zone_id', $priceZoneIds))
-                            ->where('variant', 'like', "%{$key}%");
-                    });
-                    $query->orWhereHas('category', function ($query) use ($key) {
-                        $query->where('name', 'like', "%{$key}%");
-                    });
-                    $query->orWhereHas('subCategory', function ($query) use ($key) {
-                        $query->where('name', 'like', "%{$key}%");
-                    });
-                    $query->orWhereHas('tags', function ($query) use ($key) {
-                        $query->where('tag', 'like', "%{$key}%");
-                    });
-                    $query->orWhereHas('faqs', function ($query) use ($key) {
-                        $query->where('question', 'like', "%{$key}%");
-                    });
-                    $query->orWhereHas('translations', function ($query) use ($key) {
-                        $query->where(function ($query) use ($key) {
-                            $query->where('key', 'name')
-                                ->where('value', 'like', "%{$key}%");
-                        })
-                            ->orWhere(function ($query) use ($key) {
-                                $query->where('key', 'short_description')
-                                    ->where('value', 'like', "%{$key}%");
-                            })
-                            ->orWhere(function ($query) use ($key) {
-                                $query->where('key', 'description')
-                                    ->where('value', 'like', "%{$key}%");
+                foreach ($tokenGroups as $alternatives) {
+                    $query->where(function ($tokenQuery) use ($alternatives, $priceZoneIds) {
+                        foreach ($alternatives as $term) {
+                            $tokenQuery->orWhere(function ($match) use ($term, $priceZoneIds) {
+                                $match->where('name', 'LIKE', "%{$term}%")
+                                    ->orWhere('short_description', 'LIKE', "%{$term}%")
+                                    ->orWhere('description', 'LIKE', "%{$term}%")
+                                    ->orWhereHas('variations', function ($variationQuery) use ($term, $priceZoneIds) {
+                                        $variationQuery->withoutGlobalScope('zone_wise_data')
+                                            ->when(!empty($priceZoneIds), fn ($q) => $q->whereIn('zone_id', $priceZoneIds))
+                                            ->where('variant', 'LIKE', "%{$term}%");
+                                    })
+                                    ->orWhereHas('category', fn ($category) => $category->where('name', 'LIKE', "%{$term}%"))
+                                    ->orWhereHas('subCategory', fn ($category) => $category->where('name', 'LIKE', "%{$term}%"))
+                                    ->orWhereHas('tags', fn ($tag) => $tag->where('tag', 'LIKE', "%{$term}%"))
+                                    ->orWhereHas('faqs', fn ($faq) => $faq->where('question', 'LIKE', "%{$term}%"))
+                                    ->orWhereHas('translations', function ($translationQuery) use ($term) {
+                                        $translationQuery->whereIn('key', ['name', 'short_description', 'description'])
+                                            ->where('value', 'LIKE', "%{$term}%");
+                                    });
                             });
-                    });
+                        }
                     });
                 }
             })
-
-//            ->where(function ($query) {
-//                $query->whereDoesntHave('service_discount')
-//                    ->orWhereHas('service_discount');
-//            })
-//            ->orWhere(function ($query) {
-//                $query->whereDoesntHave('category.category_discount')
-//                    ->orWhereHas('category.category_discount');
-//            })
-
             ->when(!is_null($request['rating']), function ($query) use ($request){
                 return $query->where('avg_rating', '>=', $request['rating']);
             })
@@ -306,13 +281,87 @@ class ServiceController extends Controller
         ]), 200);
     }
 
+    /**
+     * Expand common Hinglish service words while still searching the original
+     * token and the localized service/category text stored in the database.
+     */
+    private function searchTokenGroups(string $query): array
+    {
+        $tokens = preg_split('/[^\\p{L}\\p{N}]+/u', strtolower($query), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $tokens = array_slice($tokens, 0, 6);
+        $stopWords = [
+            'a', 'an', 'the', 'please', 'i', 'me', 'my', 'need', 'want', 'looking', 'for', 'find', 'book', 'service',
+            'hai', 'hain', 'ho', 'hu', 'h', 'mujhe', 'chahiye', 'karna', 'karni', 'karwana', 'karvao', 'karo', 'krna', 'krwao',
+            'ka', 'ki', 'ke', 'ko', 'kaise', 'wala', 'wali', 'wale', 'mera', 'meri', 'mere', 'kar', 'do', 'mein', 'me', 'seva', 'sevaen', 'fix', 'repair', 'ठीक', 'करो', 'सेवा', 'सेवाएं', 'सर्विस', 'से',
+            'मुझे', 'चाहिए', 'करना', 'करनी', 'करवाना', 'है', 'हैं', 'करो', 'कृपया', 'का', 'की', 'के', 'लिए', 'मेरे', 'मेरी', 'मेरा', 'में',
+        ];
+        $aliases = [
+            'ghar' => ['home', 'house'], 'house' => ['home', 'ghar'], 'home' => ['house', 'ghar'],
+            'safai' => ['clean', 'cleaning', 'housekeeping'], 'safaai' => ['clean', 'cleaning', 'housekeeping'],
+            'safayi' => ['clean', 'cleaning', 'housekeeping'], 'saaf' => ['clean', 'cleaning'], 'jhadu' => ['cleaning', 'housekeeping'],
+            'jhaadu' => ['cleaning', 'housekeeping'], 'pocha' => ['mopping', 'cleaning'], 'bartan' => ['dishwashing', 'cleaning'],
+            'bathroom' => ['washroom', 'toilet'], 'washroom' => ['bathroom', 'toilet'], 'toilet' => ['bathroom', 'plumbing'],
+            'paani' => ['water', 'plumbing', 'pipe'], 'pani' => ['water', 'plumbing', 'pipe'], 'nal' => ['tap', 'plumbing', 'pipe'],
+            'tap' => ['nal', 'plumbing'], 'pipe' => ['plumbing', 'leak', 'leakage'], 'leak' => ['leakage', 'plumbing'],
+            'leakage' => ['leak', 'plumbing'], 'plumber' => ['plumbing', 'pipe', 'leak'], 'plumbing' => ['plumber', 'pipe', 'leak'],
+            'bijli' => ['electricity', 'electrical', 'electrician', 'wiring'], 'electrician' => ['electrical', 'electric', 'wiring', 'bijli'],
+            'pankha' => ['fan', 'electrical', 'electrician'], 'fan' => ['pankha', 'electrical', 'electrician'],
+            'light' => ['lighting', 'electrical', 'electrician'], 'wiring' => ['electrical', 'electrician', 'bijli'],
+            'ac' => ['air conditioner', 'air conditioning', 'cooling'], 'cooler' => ['cooling', 'air conditioner'],
+            'thanda' => ['cooling', 'air conditioner', 'ac'], 'badhai' => ['carpenter', 'carpentry', 'furniture', 'wood'],
+            'lakdi' => ['wood', 'carpenter', 'carpentry'], 'darwaza' => ['door', 'carpenter', 'carpentry'],
+            'furniture' => ['carpenter', 'carpentry', 'wood'], 'carpenter' => ['carpentry', 'furniture', 'wood'],
+            'keede' => ['pest', 'insect', 'cockroach', 'pest control'], 'cockroach' => ['pest', 'pest control', 'insect'],
+            'tilchatta' => ['cockroach', 'pest', 'pest control'], 'machhar' => ['mosquito', 'pest', 'pest control'],
+            'mosquito' => ['machhar', 'pest', 'pest control'], 'deemak' => ['termite', 'pest', 'pest control'],
+            'termite' => ['deemak', 'pest', 'pest control'], 'chuha' => ['rat', 'rodent', 'pest control'],
+            'baal' => ['hair', 'haircut', 'salon', 'beauty'], 'haircut' => ['hair', 'salon', 'barber'],
+            'naai' => ['barber', 'haircut', 'salon'], 'barber' => ['naai', 'haircut', 'salon'],
+            'makeup' => ['beauty', 'salon'], 'facial' => ['beauty', 'salon'],
+            'kapde' => ['clothes', 'laundry', 'washing', 'iron'], 'dhulai' => ['laundry', 'washing', 'wash'],
+            'dhona' => ['washing', 'laundry', 'wash'], 'press' => ['ironing', 'laundry', 'clothes'],
+            'istri' => ['ironing', 'laundry', 'clothes'], 'fridge' => ['refrigerator', 'appliance'],
+            'refrigerator' => ['fridge', 'appliance'], 'geyser' => ['water heater', 'appliance'],
+            'rangai' => ['painting', 'paint', 'painter'], 'rang' => ['painting', 'paint', 'painter'],
+            'deewar' => ['wall', 'painting', 'paint'], 'painter' => ['painting', 'paint', 'rangai'],
+            'maalish' => ['massage', 'therapy'], 'gaadi' => ['car', 'vehicle', 'washing', 'cleaning'],
+            'car' => ['vehicle', 'automobile'], 'bike' => ['motorcycle', 'vehicle'],
+            'घर' => ['home', 'house'], 'होम' => ['home', 'house'], 'सफाई' => ['clean', 'cleaning', 'housekeeping'], 'साफ' => ['clean', 'cleaning'], 'क्लीनिंग' => ['cleaning', 'clean'], 'झाड़ू' => ['cleaning', 'housekeeping'],
+            'पोछा' => ['mopping', 'cleaning'], 'बर्तन' => ['dishwashing', 'cleaning'],
+            'नल' => ['tap', 'plumbing', 'pipe'], 'पानी' => ['water', 'plumbing', 'pipe'],
+            'प्लंबर' => ['plumber', 'plumbing', 'pipe'], 'प्लंबिंग' => ['plumber', 'plumbing', 'pipe'], 'बिजली' => ['electrical', 'electrician', 'wiring'], 'इलेक्ट्रिशियन' => ['electrician', 'electrical', 'wiring'], 'इलेक्ट्रीशियन' => ['electrician', 'electrical', 'wiring'],
+            'पंखा' => ['fan', 'electrical', 'electrician'], 'एसी' => ['ac', 'air conditioner', 'cooling'],
+            'कूलर' => ['cooler', 'cooling', 'air conditioner'], 'बढ़ई' => ['carpenter', 'carpentry', 'wood'], 'कारपेंटर' => ['carpenter', 'carpentry', 'wood'],
+            'लकड़ी' => ['wood', 'carpenter', 'carpentry'], 'दरवाजा' => ['door', 'carpenter', 'carpentry'],
+            'कीड़े' => ['pest', 'insect', 'cockroach', 'pest control'], 'तिलचट्टा' => ['cockroach', 'pest', 'pest control'],
+            'मच्छर' => ['mosquito', 'pest', 'pest control'], 'दीमक' => ['termite', 'pest', 'pest control'],
+            'बाल' => ['hair', 'haircut', 'salon', 'beauty'], 'नाई' => ['barber', 'haircut', 'salon'],
+            'कपड़े' => ['clothes', 'laundry', 'washing'], 'लॉन्ड्री' => ['laundry', 'washing', 'clothes'], 'वॉशिंग' => ['washing', 'laundry', 'clothes'], 'धुलाई' => ['laundry', 'washing', 'wash'],
+            'फ्रिज' => ['fridge', 'refrigerator', 'appliance'], 'गीजर' => ['geyser', 'water heater', 'appliance'],
+            'रंगाई' => ['painting', 'paint', 'painter'], 'पेंटिंग' => ['painting', 'paint', 'painter'], 'मालिश' => ['massage', 'therapy'],
+        ];
+
+        $groups = [];
+        foreach ($tokens as $token) {
+            if (in_array($token, $stopWords, true)) {
+                continue;
+            }
+            $groups[] = array_slice(array_values(array_unique(array_merge([$token], $aliases[$token] ?? []))), 0, 4);
+        }
+
+        if (empty($groups) && !empty($tokens)) {
+            $groups = array_map(fn ($token) => [$token], array_values(array_unique($tokens)));
+        }
+
+        return empty($groups) ? [['__search_no_tokens__']] : $groups;
+    }
     public function searchSuggestions(Request $request)
     {
         $decodedString = trim((string) $request->input('string', ''));
         if ($decodedString === '') {
             return response()->json(response_formatter(DEFAULT_200, []), 200);
         }
-        $searchWords = array_values(array_unique(array_filter(preg_split('/\s+/', $decodedString) ?: [])));
+        $tokenGroups = $this->searchTokenGroups($decodedString);
 
         $bindings = [
             $decodedString,
@@ -322,13 +371,21 @@ class ServiceController extends Controller
         ];
 
         $searchQuery = $this->service->active()->visibleInCurrentZone()
-            ->where(function ($query) use ($searchWords) {
-                foreach ($searchWords as $word) {
-                    $query->where(function ($term) use ($word) {
-                        $term->where('name', 'LIKE', "%$word%")
-                            ->orWhereHas('category', fn ($category) => $category->where('name', 'LIKE', "%$word%"))
-                            ->orWhereHas('subCategory', fn ($category) => $category->where('name', 'LIKE', "%$word%"))
-                            ->orWhereHas('tags', fn ($tag) => $tag->where('tag', 'LIKE', "%$word%"));
+            ->where(function ($query) use ($tokenGroups) {
+                foreach ($tokenGroups as $alternatives) {
+                    $query->where(function ($tokenQuery) use ($alternatives) {
+                        foreach ($alternatives as $term) {
+                            $tokenQuery->orWhere(function ($match) use ($term) {
+                                $match->where('name', 'LIKE', "%{$term}%")
+                                    ->orWhereHas('category', fn ($category) => $category->where('name', 'LIKE', "%{$term}%"))
+                                    ->orWhereHas('subCategory', fn ($category) => $category->where('name', 'LIKE', "%{$term}%"))
+                                    ->orWhereHas('tags', fn ($tag) => $tag->where('tag', 'LIKE', "%{$term}%"))
+                                    ->orWhereHas('translations', function ($translationQuery) use ($term) {
+                                        $translationQuery->whereIn('key', ['name', 'short_description', 'description'])
+                                            ->where('value', 'LIKE', "%{$term}%");
+                                    });
+                            });
+                        }
                     });
                 }
             })

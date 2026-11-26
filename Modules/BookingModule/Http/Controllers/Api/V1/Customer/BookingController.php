@@ -322,6 +322,7 @@ class BookingController extends Controller
                 'extraServices',
                 'booking_partial_payments',
                 'repeat.scheduleHistories',
+                'repeat.statusHistories.user',
                 'repeat.repeatHistories'
             ])
             ->where(['id' => $id])

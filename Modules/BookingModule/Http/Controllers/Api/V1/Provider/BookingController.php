@@ -685,7 +685,7 @@ class BookingController extends Controller
             'detail.service', 'schedule_histories.user', 'status_histories.user', 'customer',
             'provider', 'zone', 'serviceman.user', 'booking_partial_payments', 'booking_offline_payments',
             'servicemenAssignments.serviceman.user',
-            'repeat.detail.service', 'repeat.repeatHistories', 'extraServices'
+            'repeat.detail.service', 'repeat.statusHistories.user', 'repeat.repeatHistories', 'extraServices'
         ])->where(function ($query) use ($provider_id) {
             return $query->where(function ($query) use ($provider_id) {
                 $query->where('provider_id', $provider_id)
@@ -1101,6 +1101,15 @@ class BookingController extends Controller
 
         if (isset($booking)) {
 
+            if ($request->booking_status === 'completed' && $booking->booking_status === 'completed') {
+                return response()->json(response_formatter(BOOKING_ALREADY_COMPLETED), 200);
+            }
+            if ($request->booking_status === 'completed' && $booking->booking_status !== 'ongoing') {
+                return response()->json(response_formatter(DEFAULT_400, null, [
+                    ['error_code' => 'status', 'message' => translate('Only an ongoing booking can be completed.')],
+                ]), 400);
+            }
+
             if ($request->booking_status === 'ongoing' && $booking->booking_status !== 'ongoing') {
                 return response()->json(response_formatter(DEFAULT_400, null, [
                     ['error_code' => 'otp', 'message' => translate('Only the assigned serviceman can start this booking after verifying the customer OTP.')],
@@ -1192,6 +1201,14 @@ class BookingController extends Controller
         })->first();
 
         if (isset($booking)) {
+            if ($request->booking_status === 'completed' && $booking->booking_status === 'completed') {
+                return response()->json(response_formatter(BOOKING_ALREADY_COMPLETED), 200);
+            }
+            if ($request->booking_status === 'completed' && $booking->booking_status !== 'ongoing') {
+                return response()->json(response_formatter(DEFAULT_400, null, [
+                    ['error_code' => 'status', 'message' => translate('Only an ongoing booking can be completed.')],
+                ]), 400);
+            }
             if ($request->booking_status === 'ongoing' && $booking->booking_status !== 'ongoing') {
                 return response()->json(response_formatter(DEFAULT_400, null, [
                     ['error_code' => 'otp', 'message' => translate('Only the assigned serviceman can start this booking after verifying the customer OTP.')],

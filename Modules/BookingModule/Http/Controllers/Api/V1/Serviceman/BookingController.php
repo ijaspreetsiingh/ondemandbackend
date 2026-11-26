@@ -65,6 +65,16 @@ class BookingController extends Controller
 
         if (isset($booking)) {
 
+            // Record completion only after the OTP and face-verified ongoing transition.
+            if ($bookingStatus === 'completed' && $booking->booking_status === 'completed') {
+                return response()->json(response_formatter(BOOKING_ALREADY_COMPLETED), 200);
+            }
+            if ($bookingStatus === 'completed' && $booking->booking_status !== 'ongoing') {
+                return response()->json(response_formatter(DEFAULT_400, null, [
+                    ['error_code' => 'status', 'message' => translate('Only an ongoing booking can be completed.')],
+                ]), 400);
+            }
+
             if ($booking->payment_method == 'offline_payment' && $booking->is_paid == 0 && in_array($request->booking_status, ['ongoing', 'completed'])) {
                 if ($booking->booking_offline_payments->isEmpty()) {
                     return response()->json(response_formatter(UPDATE_FAILED_FOR_OFFLINE_PAYMENT_VERIFICATION_200), 200);
@@ -162,6 +172,16 @@ class BookingController extends Controller
         $bookingStatus = $request->booking_status;
 
         if (isset($booking)) {
+
+            // Keep repeat-session completion tied to its own verified start.
+            if ($bookingStatus === 'completed' && $booking->booking_status === 'completed') {
+                return response()->json(response_formatter(BOOKING_ALREADY_COMPLETED), 200);
+            }
+            if ($bookingStatus === 'completed' && $booking->booking_status !== 'ongoing') {
+                return response()->json(response_formatter(DEFAULT_400, null, [
+                    ['error_code' => 'status', 'message' => translate('Only an ongoing booking can be completed.')],
+                ]), 400);
+            }
 
             if ($bookingStatus == 'ongoing') {
                 if ($booking->booking_status !== 'accepted') {
