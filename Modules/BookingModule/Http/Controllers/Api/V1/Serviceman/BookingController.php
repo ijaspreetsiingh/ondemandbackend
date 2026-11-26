@@ -66,8 +66,9 @@ class BookingController extends Controller
         if (isset($booking)) {
 
             // Record completion only after the OTP and face-verified ongoing transition.
-            if ($bookingStatus === 'completed' && $booking->booking_status === 'completed') {
-                return response()->json(response_formatter(BOOKING_ALREADY_COMPLETED), 200);
+            if (in_array($bookingStatus, ['ongoing', 'completed'], true)
+                && $booking->booking_status === $bookingStatus) {
+                return response()->json(response_formatter(BOOKING_STATUS_UPDATE_SUCCESS_200, $booking), 200);
             }
             if ($bookingStatus === 'completed' && $booking->booking_status !== 'ongoing') {
                 return response()->json(response_formatter(DEFAULT_400, null, [
@@ -120,33 +121,84 @@ class BookingController extends Controller
                 }
             }
 
-            if ($bookingStatus == 'completed' && (business_config('service_complete_photo_evidence', 'booking_setup'))?->live_values == 1) {
-                if ($request->has('evidence_photos')) {
-                    foreach ($request->evidence_photos as $image) {
-                        $imageName = file_uploader('booking/evidence/', APPLICATION_IMAGE_FORMAT, $image);
-                        $evidencePhotos[] = ['image'=>$imageName, 'storage'=> getDisk()];
-                    }
-                }
-            }
-
             if($booking->payment_method != 'cash_after_service' && $request['booking_status'] == 'canceled' && $booking->additional_charge > 0){
                 return response()->json(response_formatter(BOOKING_ALREADY_EDITED), 200);
             }
 
-            $booking->booking_status = $request['booking_status'];
-            $booking->evidence_photos = $evidencePhotos;
+            $expectedStatus = $booking->booking_status;
+            $servicemanId = $request->user()->serviceman->id;
+            $transition = DB::transaction(function () use ($bookingId, $servicemanId, $expectedStatus, $bookingStatus, $request) {
+                $lockedBooking = Booking::whereKey($bookingId)
+                    ->where('serviceman_id', $servicemanId)
+                    ->lockForUpdate()
+                    ->first();
+                if (!$lockedBooking) {
+                    return ['state' => 'missing'];
+                }
+                if ($lockedBooking->booking_status === $bookingStatus) {
+                    return ['state' => 'unchanged', 'booking' => $lockedBooking];
+                }
+                if ($lockedBooking->booking_status !== $expectedStatus) {
+                    return ['state' => 'conflict'];
+                }
+                if ($bookingStatus === 'ongoing') {
+                    if ($lockedBooking->booking_status !== 'accepted'
+                        || !$lockedBooking->start_otp
+                        || (string) $request->input('start_otp') !== (string) $lockedBooking->start_otp) {
+                        return ['state' => 'start_verification_failed'];
+                    }
+                    $faceVerified = BookingFaceVerification::where('booking_id', $lockedBooking->id)
+                        ->where('serviceman_id', $servicemanId)
+                        ->whereIn('status', ['verified', 'provider_approved'])
+                        ->exists();
+                    if (!$faceVerified) {
+                        return ['state' => 'face_verification_required'];
+                    }
+                }
 
-            $bookingStatusHistory = $this->bookingStatusHistory;
-            $bookingStatusHistory->booking_id = $bookingId;
-            $bookingStatusHistory->changed_by = $request->user()->id;
-            $bookingStatusHistory->booking_status = $request['booking_status'];
+                $evidencePhotos = [];
+                if ($bookingStatus === 'completed'
+                    && (business_config('service_complete_photo_evidence', 'booking_setup'))?->live_values == 1
+                    && $request->has('evidence_photos')) {
+                    foreach ($request->evidence_photos as $image) {
+                        $imageName = file_uploader('booking/evidence/', APPLICATION_IMAGE_FORMAT, $image);
+                        $evidencePhotos[] = ['image' => $imageName, 'storage' => getDisk()];
+                    }
+                }
 
-            DB::transaction(function () use ($bookingStatusHistory, $booking) {
-                $booking->save();
-                $bookingStatusHistory->save();
-            });
+                $eventAt = now();
+                $lockedBooking->booking_status = $bookingStatus;
+                $lockedBooking->evidence_photos = $evidencePhotos;
+                $lockedBooking->updated_at = $eventAt;
+                $lockedBooking->save();
 
-            return response()->json(response_formatter(BOOKING_STATUS_UPDATE_SUCCESS_200, $booking), 200);
+                $history = new BookingStatusHistory();
+                $history->booking_id = $bookingId;
+                $history->changed_by = $request->user()->id;
+                $history->booking_status = $bookingStatus;
+                $history->created_at = $eventAt;
+                $history->updated_at = $eventAt;
+                $history->save();
+
+                return ['state' => 'updated', 'booking' => $lockedBooking];
+            }, 3);
+
+            if ($transition['state'] === 'missing') {
+                return response()->json(response_formatter(DEFAULT_204), 200);
+            }
+            if ($transition['state'] === 'conflict') {
+                return response()->json(['response_code' => 'booking_status_conflict_409', 'message' => translate('Booking status changed. Refresh and try again.')], 409);
+            }
+            if ($transition['state'] === 'start_verification_failed') {
+                return response()->json(response_formatter(DEFAULT_400, null, [
+                    ['error_code' => 'otp', 'message' => translate('Verify the current start OTP before starting this service.')],
+                ]), 400);
+            }
+            if ($transition['state'] === 'face_verification_required') {
+                return response()->json(['response_code' => 'face_verification_required_403', 'message' => translate('Complete face verification before starting this service.')], 403);
+            }
+
+            return response()->json(response_formatter(BOOKING_STATUS_UPDATE_SUCCESS_200, $transition['booking']), 200);
         }
         return response()->json(response_formatter(DEFAULT_204), 200);
     }
@@ -174,8 +226,9 @@ class BookingController extends Controller
         if (isset($booking)) {
 
             // Keep repeat-session completion tied to its own verified start.
-            if ($bookingStatus === 'completed' && $booking->booking_status === 'completed') {
-                return response()->json(response_formatter(BOOKING_ALREADY_COMPLETED), 200);
+            if (in_array($bookingStatus, ['ongoing', 'completed'], true)
+                && $booking->booking_status === $bookingStatus) {
+                return response()->json(response_formatter(BOOKING_STATUS_UPDATE_SUCCESS_200, $booking), 200);
             }
             if ($bookingStatus === 'completed' && $booking->booking_status !== 'ongoing') {
                 return response()->json(response_formatter(DEFAULT_400, null, [
@@ -216,90 +269,122 @@ class BookingController extends Controller
                 }
             }
 
-            if ($bookingStatus == 'completed' && (business_config('service_complete_photo_evidence', 'booking_setup'))?->live_values == 1) {
-                if ($request->has('evidence_photos')) {
+            $expectedStatus = $booking->getOriginal('booking_status');
+            $targetStatus = $bookingStatus;
+
+            $servicemanId = $request->user()->serviceman->id;
+            $transition = DB::transaction(function () use ($bookingId, $servicemanId, $expectedStatus, $targetStatus, $request) {
+                $lockedBooking = BookingRepeat::whereKey($bookingId)
+                    ->where('serviceman_id', $servicemanId)
+                    ->lockForUpdate()
+                    ->first();
+                if (!$lockedBooking) {
+                    return ['state' => 'missing'];
+                }
+                if ($lockedBooking->booking_status === $targetStatus) {
+                    return ['state' => 'unchanged', 'booking' => $lockedBooking];
+                }
+                if ($lockedBooking->booking_status !== $expectedStatus) {
+                    return ['state' => 'conflict'];
+                }
+                if ($targetStatus === 'ongoing') {
+                    if ($lockedBooking->booking_status !== 'accepted'
+                        || !$lockedBooking->start_otp
+                        || !$lockedBooking->serviceman_reached_at
+                        || (string) $request->input('start_otp') !== (string) $lockedBooking->start_otp) {
+                        return ['state' => 'start_verification_failed'];
+                    }
+                    $faceVerified = BookingFaceVerification::where('booking_repeat_id', $lockedBooking->id)
+                        ->where('serviceman_id', $servicemanId)
+                        ->whereIn('status', ['verified', 'provider_approved'])
+                        ->exists();
+                    if (!$faceVerified) {
+                        return ['state' => 'face_verification_required'];
+                    }
+                }
+
+                if ($targetStatus === 'canceled' && (float) $lockedBooking->extra_fee > 0) {
+                    $parentForFee = Booking::with('repeat')->whereKey($lockedBooking->booking_id)->lockForUpdate()->first();
+                    $sortedRepeats = collect($parentForFee?->repeat ?? [])->sortBy(function ($repeat) {
+                        $parts = explode('-', $repeat->readable_id);
+                        return $this->readableIdToNumber(end($parts));
+                    })->values();
+                    $nextService = $sortedRepeats->where('booking_status', 'ongoing')->skip(1)->first()
+                        ?? $sortedRepeats->where('booking_status', 'accepted')->skip(1)->first()
+                        ?? $sortedRepeats->where('booking_status', 'pending')->skip(1)->first();
+                    if ($nextService) {
+                        $nextServiceFee = BookingRepeat::whereKey($nextService->id)->lockForUpdate()->first();
+                        if ($nextServiceFee) {
+                            $fee = (float) $lockedBooking->extra_fee;
+                            $nextServiceFee->extra_fee = $fee;
+                            $nextServiceFee->total_booking_amount += $fee;
+                            $nextServiceFee->save();
+                            $lockedBooking->total_booking_amount -= $fee;
+                            $lockedBooking->extra_fee = 0;
+                        }
+                    }
+                }
+                $evidencePhotos = [];
+                if ($targetStatus === 'completed'
+                    && (business_config('service_complete_photo_evidence', 'booking_setup'))?->live_values == 1
+                    && $request->has('evidence_photos')) {
                     foreach ($request->evidence_photos as $image) {
                         $imageName = file_uploader('booking/evidence/', APPLICATION_IMAGE_FORMAT, $image);
-                        $evidencePhotos[] = ['image'=>$imageName, 'storage'=> getDisk()];
+                        $evidencePhotos[] = ['image' => $imageName, 'storage' => getDisk()];
                     }
                 }
-            }
 
-            $booking->booking_status = $request['booking_status'];
-            $booking->evidence_photos = $evidencePhotos;
+                                $eventAt = now();
+                $lockedBooking->booking_status = $targetStatus;
+                $lockedBooking->evidence_photos = $evidencePhotos;
+                $lockedBooking->updated_at = $eventAt;
+                $lockedBooking->save();
 
-            $bookingStatusHistory = $this->bookingStatusHistory;
-            $bookingStatusHistory->booking_id = 0;
-            $bookingStatusHistory->changed_by = $request->user()->id;
-            $bookingStatusHistory->booking_status = $request['booking_status'];
-            $bookingStatusHistory->booking_repeat_id = $bookingId;
+                $history = new BookingStatusHistory();
+                $history->booking_id = 0;
+                $history->booking_repeat_id = $bookingId;
+                $history->changed_by = $request->user()->id;
+                $history->booking_status = $targetStatus;
+                $history->created_at = $eventAt;
+                $history->updated_at = $eventAt;
+                $history->save();
 
-            if ($request['booking_status'] == 'canceled' && $booking->extra_fee > 0){
-
-                $repeats = $this->booking->where('id', $booking->booking_id)->first();
-                $sortedRepeats = $repeats->repeat->sortBy(function ($repeat) {
-                    $parts = explode('-', $repeat->readable_id);
-                    $suffix = end($parts);
-                    return $this->readableIdToNumber($suffix);
-                });
-
-                $repeats['repeats'] = $sortedRepeats->values()->toArray();
-
-                $nextService = collect($repeats['repeats'])
-                    ->where('booking_status', 'ongoing')
-                    ->skip(1)
-                    ->first();
-
-                if (!$nextService) {
-                    $nextService = collect($repeats['repeats'])
-                        ->where('booking_status', 'accepted')
-                        ->skip(1)
-                        ->first();
-                }
-
-                if (!$nextService) {
-                    $nextService = collect($repeats['repeats'])
-                        ->where('booking_status', 'pending')
-                        ->skip(1)
-                        ->first();
-                }
-
-                if (isset($nextService)){
-                    $nextServiceId = $nextService['id'];
-                    $nextServiceFee = $this->bookingRepeat->where('id', $nextServiceId)->first();
-                    $nextServiceFee->extra_fee = $booking->extra_fee;
-                    $nextServiceFee->total_booking_amount += $booking->extra_fee;
-                    $nextServiceFee->save();
-
-                    $booking->total_booking_amount -= $booking->extra_fee;
-                    $booking->extra_fee = 0;
-                }
-            }
-
-            DB::transaction(function () use ($bookingStatusHistory, $booking) {
-                $booking->save();
-                $bookingStatusHistory->save();
-
-                $fullBooking = $this->bookingRepeat->where('booking_id', $booking->booking_id)->get();
-                $allInactive = $fullBooking->every(function ($repeat) {
-                    return !in_array($repeat->booking_status, ['pending', 'accepted', 'ongoing']);
-                });
-
-                if ($allInactive) {
-                    $booking->booking->booking_status = 'completed';
-                    $booking->booking->is_paid = 1;
-                    $booking->booking->save();
-                }
-
-                if (in_array($booking->booking_status, ['ongoing', 'completed', 'canceled'])) {
-                    if ($booking->booking->booking_status != 'ongoing' && $booking->booking->booking_status != 'completed' && $booking->booking->booking_status != 'canceled') {
-                        $booking->booking->booking_status = 'ongoing';
-                        $booking->booking->save();
+                $parentBooking = Booking::whereKey($lockedBooking->booking_id)->lockForUpdate()->first();
+                if ($parentBooking) {
+                    $fullBooking = BookingRepeat::where('booking_id', $lockedBooking->booking_id)->get();
+                    $allInactive = $fullBooking->every(function ($repeat) {
+                        return !in_array($repeat->booking_status, ['pending', 'accepted', 'ongoing']);
+                    });
+                    if ($allInactive) {
+                        $parentBooking->booking_status = 'completed';
+                        $parentBooking->is_paid = 1;
+                        $parentBooking->save();
+                    } elseif (in_array($targetStatus, ['ongoing', 'completed', 'canceled'], true)
+                        && !in_array($parentBooking->booking_status, ['ongoing', 'completed', 'canceled'], true)) {
+                        $parentBooking->booking_status = 'ongoing';
+                        $parentBooking->save();
                     }
                 }
-            });
 
-            return response()->json(response_formatter(BOOKING_STATUS_UPDATE_SUCCESS_200, $booking), 200);
+                return ['state' => 'updated', 'booking' => $lockedBooking];
+            }, 3);
+
+            if ($transition['state'] === 'missing') {
+                return response()->json(response_formatter(DEFAULT_204), 200);
+            }
+            if ($transition['state'] === 'conflict') {
+                return response()->json(['response_code' => 'booking_status_conflict_409', 'message' => translate('Booking status changed. Refresh and try again.')], 409);
+            }
+            if ($transition['state'] === 'start_verification_failed') {
+                return response()->json(response_formatter(DEFAULT_400, null, [
+                    ['error_code' => 'otp', 'message' => translate('Verify the current start OTP before starting this service.')],
+                ]), 400);
+            }
+            if ($transition['state'] === 'face_verification_required') {
+                return response()->json(['response_code' => 'face_verification_required_403', 'message' => translate('Complete face verification before starting this service.')], 403);
+            }
+
+            return response()->json(response_formatter(BOOKING_STATUS_UPDATE_SUCCESS_200, $transition['booking']), 200);
         }
         return response()->json(response_formatter(DEFAULT_204), 200);
     }
