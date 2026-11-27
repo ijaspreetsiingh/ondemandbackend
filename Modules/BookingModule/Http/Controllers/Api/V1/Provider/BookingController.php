@@ -144,7 +144,7 @@ class BookingController extends Controller
 
         //bookings list
         $bookings = $this->booking
-            ->with(['customer', 'subCategory:id,name', 'booking_offline_payments' => function ($query) {
+            ->with(['customer', 'subCategory:id,name', 'serviceman.user', 'repeat.serviceman.user', 'booking_offline_payments' => function ($query) {
                     $query->first() ?? [];
             }])
             ->when(!in_array($request['booking_status'], ['pending', 'all']), function ($query) use ($providerId, $request, $maxBookingAmount) {
@@ -680,19 +680,25 @@ class BookingController extends Controller
      */
     public function show(Request $request, string $id): JsonResponse
     {
-        $provider_id = $request->user()->provider->id;
+        $provider = $request->user()->provider;
+        $provider_id = $provider->id;
+        $maxBookingAmount = business_config('max_booking_amount', 'booking_setup')->live_values;
         $booking = $this->booking->with([
             'detail.service', 'schedule_histories.user', 'status_histories.user', 'customer',
             'provider', 'zone', 'serviceman.user', 'booking_partial_payments', 'booking_offline_payments',
             'servicemenAssignments.serviceman.user',
             'repeat.detail.service', 'repeat.statusHistories.user', 'repeat.repeatHistories', 'extraServices'
-        ])->where(function ($query) use ($provider_id) {
+        ])->where(function ($query) use ($provider_id, $provider, $maxBookingAmount) {
             return $query->where(function ($query) use ($provider_id) {
                 $query->where('provider_id', $provider_id)
                     ->orWhere('assigned_provider_id', $provider_id)
                     ->orWhereHas('repeat', function ($subQuery) use ($provider_id) {
                         $subQuery->where('provider_id', $provider_id);
                     });
+            })->orWhere(function ($query) use ($provider, $maxBookingAmount) {
+                // Pending zone-pool bookings have provider_id = null. Providers
+                // can still see their details from the Requests/Dashboard list.
+                $query->providerPendingBookings($provider, $maxBookingAmount);
             });
         })->where(['id' => $id])->first();
 
@@ -802,14 +808,23 @@ class BookingController extends Controller
      */
     public function singleDetails(Request $request, string $id): JsonResponse
     {
+        $provider = $request->user()->provider;
+        $providerId = $provider->id;
+        $maxBookingAmount = business_config('max_booking_amount', 'booking_setup')->live_values;
         $booking = $this->bookingRepeat->with([
             'detail.service', 'scheduleHistories.user', 'statusHistories.user', 'booking.customer', 'booking.provider', 'serviceman.user'
-        ])->where(function ($query) use ($request) {
-            $providerId = $request->user()->provider->id;
+        ])->where(function ($query) use ($provider, $providerId, $maxBookingAmount) {
             return $query->where('provider_id', $providerId)
                 ->orWhereHas('booking', function ($bookingQuery) use ($providerId) {
                     $bookingQuery->where('provider_id', $providerId)
                         ->orWhere('assigned_provider_id', $providerId);
+                })
+                ->orWhere(function ($query) use ($provider, $maxBookingAmount) {
+                    // Pending zone-pool repeat bookings: parent booking must be
+                    // visible to this provider (same zone/subscribed subcategory).
+                    $query->whereHas('booking', function ($bookingQuery) use ($provider, $maxBookingAmount) {
+                        $bookingQuery->providerPendingBookings($provider, $maxBookingAmount);
+                    });
                 });
         })->where(['id' => $id])->first();
 

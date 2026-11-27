@@ -157,20 +157,52 @@ class ServicemanController extends Controller
      */
     public function show(Request $request, string $id): JsonResponse
     {
-        $bookings = $this->booking->where('serviceman_id', $id)
+        $bookingCount = [
+            'total' => 0,
+            'pending' => 0,
+            'accepted' => 0,
+            'ongoing' => 0,
+            'completed' => 0,
+            'canceled' => 0,
+            'total_earning' => 0,
+        ];
+
+        $regularBookings = $this->booking->where('serviceman_id', $id)
             ->select('booking_status', DB::raw('count(*) as total_booking'))
             ->groupBy('booking_status')
             ->get();
 
-        $bookingCount = ['ongoing'=>0,'completed'=>0,'canceled'=>0];
-        foreach ($bookings as $booking) {
-            if ($booking->booking_status == 'ongoing')
-                $bookingCount['ongoing'] = $booking->total_booking ?? 0;
-            if ($booking->booking_status == 'completed')
-                $bookingCount['completed'] = $booking->total_booking ?? 0;
-            if ($booking->booking_status == 'canceled')
-                $bookingCount['canceled'] = $booking->total_booking ?? 0;
+        $repeatBookings = DB::table('booking_repeats')
+            ->where('serviceman_id', $id)
+            ->select('booking_status', DB::raw('count(*) as total_booking'))
+            ->groupBy('booking_status')
+            ->get();
+
+        foreach ([$regularBookings, $repeatBookings] as $bookings) {
+            foreach ($bookings as $booking) {
+                $count = (int) ($booking->total_booking ?? 0);
+                $bookingCount['total'] += $count;
+                if (array_key_exists($booking->booking_status, $bookingCount)) {
+                    $bookingCount[$booking->booking_status] += $count;
+                }
+            }
         }
+
+        // Completed regular + repeat bookings ki serviceman earning.
+        $regularEarning = DB::table('booking_details_amounts as amounts')
+            ->join('bookings as booking', 'amounts.booking_id', '=', 'booking.id')
+            ->whereNull('amounts.booking_repeat_id')
+            ->where('booking.serviceman_id', $id)
+            ->where('booking.booking_status', 'completed')
+            ->sum('amounts.serviceman_earning');
+
+        $repeatEarning = DB::table('booking_details_amounts as amounts')
+            ->join('booking_repeats as booking_repeat', 'amounts.booking_repeat_id', '=', 'booking_repeat.id')
+            ->where('booking_repeat.serviceman_id', $id)
+            ->where('booking_repeat.booking_status', 'completed')
+            ->sum('amounts.serviceman_earning');
+
+        $bookingCount['total_earning'] = round((float) $regularEarning + (float) $repeatEarning, 2);
 
         $serviceman = $this->serviceman::with([
             'user',
