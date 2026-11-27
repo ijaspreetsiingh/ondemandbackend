@@ -696,9 +696,30 @@ class BookingController extends Controller
                         $subQuery->where('provider_id', $provider_id);
                     });
             })->orWhere(function ($query) use ($provider, $maxBookingAmount) {
-                // Pending zone-pool bookings have provider_id = null. Providers
-                // can still see their details from the Requests/Dashboard list.
-                $query->providerPendingBookings($provider, $maxBookingAmount);
+                // The dashboard's recent-bookings feed has its own visibility
+                // rules (zone + subscribed category) and can include a pending
+                // booking even when providerPendingBookings rejects it because
+                // of subscription/availability state. Keep its detail tap valid.
+                $subscribedSubCategories = \Modules\ProviderManagement\Entities\SubscribedService::where('provider_id', $provider->id)
+                    ->where('is_subscribed', 1)
+                    ->pluck('sub_category_id');
+
+                $query->where('booking_status', 'pending')
+                    ->where('zone_id', $provider->zone_id)
+                    ->whereIn('sub_category_id', $subscribedSubCategories)
+                    ->when($maxBookingAmount > 0, function ($query) use ($maxBookingAmount) {
+                        $query->where(function ($query) use ($maxBookingAmount) {
+                            $query->where('payment_method', 'cash_after_service')
+                                ->where(function ($query) use ($maxBookingAmount) {
+                                    $query->where('is_verified', 1)
+                                        ->orWhere('total_booking_amount', '<=', $maxBookingAmount);
+                                })
+                                ->orWhere('payment_method', '<>', 'cash_after_service');
+                        });
+                    })
+                    ->whereDoesntHave('ignores', function ($query) use ($provider) {
+                        $query->where('provider_id', $provider->id);
+                    });
             });
         })->where(['id' => $id])->first();
 
@@ -822,8 +843,27 @@ class BookingController extends Controller
                 ->orWhere(function ($query) use ($provider, $maxBookingAmount) {
                     // Pending zone-pool repeat bookings: parent booking must be
                     // visible to this provider (same zone/subscribed subcategory).
-                    $query->whereHas('booking', function ($bookingQuery) use ($provider, $maxBookingAmount) {
-                        $bookingQuery->providerPendingBookings($provider, $maxBookingAmount);
+                    $subscribedSubCategories = \Modules\ProviderManagement\Entities\SubscribedService::where('provider_id', $provider->id)
+                        ->where('is_subscribed', 1)
+                        ->pluck('sub_category_id');
+
+                    $query->whereHas('booking', function ($bookingQuery) use ($provider, $maxBookingAmount, $subscribedSubCategories) {
+                        $bookingQuery->where('booking_status', 'pending')
+                            ->where('zone_id', $provider->zone_id)
+                            ->whereIn('sub_category_id', $subscribedSubCategories)
+                            ->when($maxBookingAmount > 0, function ($query) use ($maxBookingAmount) {
+                                $query->where(function ($query) use ($maxBookingAmount) {
+                                    $query->where('payment_method', 'cash_after_service')
+                                        ->where(function ($query) use ($maxBookingAmount) {
+                                            $query->where('is_verified', 1)
+                                                ->orWhere('total_booking_amount', '<=', $maxBookingAmount);
+                                        })
+                                        ->orWhere('payment_method', '<>', 'cash_after_service');
+                                });
+                            })
+                            ->whereDoesntHave('ignores', function ($query) use ($provider) {
+                                $query->where('provider_id', $provider->id);
+                            });
                     });
                 });
         })->where(['id' => $id])->first();
